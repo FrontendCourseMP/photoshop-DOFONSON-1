@@ -1,8 +1,0 @@
-node_modules
-build
-public
-coverage
-*.log
-.env
-.env.local
-.DS_Store
