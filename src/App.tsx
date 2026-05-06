@@ -1,4 +1,3 @@
-import React from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Container from '@mui/material/Container';
@@ -11,7 +10,13 @@ const theme = createTheme({
       main: '#1976d2',
     },
     secondary: {
-      main: '#dc004e',
+      main: '#9c27b0',
+    },
+    error: {
+      main: '#f44336',
+    },
+    success: {
+      main: '#4caf50',
     },
     background: {
       default: '#f5f5f5',
@@ -26,7 +31,7 @@ function App(): JSX.Element {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
         <ImageEditor />
       </Container>
     </ThemeProvider>
