@@ -1,4 +1,3 @@
-// components/ImageEditor.tsx
 import React, { useState, useRef, ChangeEvent, useCallback, useEffect } from 'react';
 import {
     Paper,
@@ -13,7 +12,6 @@ import {
     Stack,
     FormControlLabel,
     Switch,
-    IconButton,
     Tooltip,
     Dialog,
     DialogTitle,
@@ -33,7 +31,9 @@ import {
     Save as SaveIcon,
     ColorLens as ColorLensIcon,
     Opacity as OpacityIcon,
+    BarChart as LevelsIcon
 } from '@mui/icons-material';
+import LevelsDialog from './LevelsDialog';
 
 interface ImageInfo {
     width: number;
@@ -72,14 +72,11 @@ interface ColorInfo {
     lab: { L: number; a: number; b: number };
 }
 
-// Конвертация RGB в CIELAB
 const rgbToLab = (r: number, g: number, b: number): { L: number; a: number; b: number } => {
-    // Нормализуем RGB в диапазон [0, 1]
     let var_R = r / 255;
     let var_G = g / 255;
     let var_B = b / 255;
 
-    // Применяем гамма-коррекцию
     const gammaCorrect = (x: number): number => {
         return x > 0.04045 ? Math.pow((x + 0.055) / 1.055, 2.4) : x / 12.92;
     };
@@ -87,12 +84,10 @@ const rgbToLab = (r: number, g: number, b: number): { L: number; a: number; b: n
     var_G = gammaCorrect(var_G);
     var_B = gammaCorrect(var_B);
 
-    // Конвертируем в XYZ
     const X = var_R * 0.4124564 + var_G * 0.3575761 + var_B * 0.1804375;
     const Y = var_R * 0.2126729 + var_G * 0.7151522 + var_B * 0.0721750;
     const Z = var_R * 0.0193339 + var_G * 0.1191920 + var_B * 0.9503041;
 
-    // Референсные белые точки (D65)
     const refX = 95.047;
     const refY = 100.000;
     const refZ = 108.883;
@@ -116,7 +111,6 @@ const rgbToLab = (r: number, g: number, b: number): { L: number; a: number; b: n
     return { L: Math.round(L * 100) / 100, a: Math.round(a * 100) / 100, b: Math.round(bVal * 100) / 100 };
 };
 
-// Миниатюра канала
 const ThumbnailContainer = styled(Box)(({ theme }) => ({
     cursor: 'pointer',
     borderRadius: '8px',
@@ -143,24 +137,23 @@ const ImageEditor: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [grayBitData, setGrayBitData] = useState<Uint8Array | null>(null);
     const [showMask, setShowMask] = useState<boolean>(false);
-    
-    // Оригинальные данные изображения (неизменяемые)
+
+    const [levelsDialogOpen, setLevelsDialogOpen] = useState<boolean>(false);
+    const [workImageData, setWorkImageData] = useState<ImageData | null>(null);
+
     const [originalImageData, setOriginalImageData] = useState<ImageData | null>(null);
-    
-    // Состояние каналов
+
     const [channels, setChannels] = useState<ChannelState>({
         red: true,
         green: true,
         blue: true,
         alpha: true,
     });
-    
-    // Состояние инструмента пипетки
+
     const [eyedropperActive, setEyedropperActive] = useState<boolean>(false);
     const [colorInfo, setColorInfo] = useState<ColorInfo | null>(null);
     const [colorDialogOpen, setColorDialogOpen] = useState<boolean>(false);
-    
-    // Миниатюры каналов
+
     const [channelThumbnails, setChannelThumbnails] = useState<{
         grayscale: string | null;
         grayscaleAlpha: string | null;
@@ -172,42 +165,38 @@ const ImageEditor: React.FC = () => {
         rgb: null,
         rgba: null,
     });
-    
+
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Применение фильтра каналов к изображению
     const applyChannelFilter = useCallback(() => {
         if (!originalImageData || !canvasRef.current) return;
 
         const width = originalImageData.width;
         const height = originalImageData.height;
         const originalPixels = originalImageData.data;
-        
-        // Создаем новый ImageData для вывода
+
         const outputImageData = new ImageData(width, height);
         const outputPixels = outputImageData.data;
-        
+
         for (let i = 0; i < width * height; i++) {
             const idx = i * 4;
             let r = originalPixels[idx];
             let g = originalPixels[idx + 1];
             let b = originalPixels[idx + 2];
             let a = originalPixels[idx + 3];
-            
-            // Применяем состояние каналов
+
             if (!channels.red) r = 0;
             if (!channels.green) g = 0;
             if (!channels.blue) b = 0;
-            if (!channels.alpha) a = 255; // Если альфа выключен, делаем непрозрачным
-            
+            if (!channels.alpha) a = 255; 
+
             outputPixels[idx] = r;
             outputPixels[idx + 1] = g;
             outputPixels[idx + 2] = b;
             outputPixels[idx + 3] = a;
         }
-        
-        // Отрисовка на canvas
+
         const ctx = canvasRef.current.getContext('2d');
         if (ctx) {
             canvasRef.current.width = width;
@@ -216,13 +205,11 @@ const ImageEditor: React.FC = () => {
         }
     }, [originalImageData, channels]);
 
-    // Генерация миниатюр для панели каналов
     const generateChannelThumbnails = useCallback((imageData: ImageData) => {
         const width = imageData.width;
         const height = imageData.height;
         const pixels = imageData.data;
-        
-        // 1. Grayscale (только яркость)
+
         const grayscaleCanvas = document.createElement('canvas');
         grayscaleCanvas.width = width;
         grayscaleCanvas.height = height;
@@ -241,8 +228,7 @@ const ImageEditor: React.FC = () => {
             grayscaleCtx.putImageData(grayImageData, 0, 0);
             setChannelThumbnails(prev => ({ ...prev, grayscale: grayscaleCanvas.toDataURL() }));
         }
-        
-        // 2. Grayscale + Alpha (яркость + альфа-канал)
+
         const grayscaleAlphaCanvas = document.createElement('canvas');
         grayscaleAlphaCanvas.width = width;
         grayscaleAlphaCanvas.height = height;
@@ -261,8 +247,7 @@ const ImageEditor: React.FC = () => {
             grayscaleAlphaCtx.putImageData(grayAlphaImageData, 0, 0);
             setChannelThumbnails(prev => ({ ...prev, grayscaleAlpha: grayscaleAlphaCanvas.toDataURL() }));
         }
-        
-        // 3. RGB (цветное)
+
         const rgbCanvas = document.createElement('canvas');
         rgbCanvas.width = width;
         rgbCanvas.height = height;
@@ -280,8 +265,7 @@ const ImageEditor: React.FC = () => {
             rgbCtx.putImageData(rgbImageData, 0, 0);
             setChannelThumbnails(prev => ({ ...prev, rgb: rgbCanvas.toDataURL() }));
         }
-        
-        // 4. RGB + Alpha (цветное с прозрачностью)
+
         const rgbaCanvas = document.createElement('canvas');
         rgbaCanvas.width = width;
         rgbaCanvas.height = height;
@@ -292,81 +276,95 @@ const ImageEditor: React.FC = () => {
         }
     }, []);
 
-    // Обработчик клика на холсте для пипетки
+    const handleApplyLevels = useCallback((newImageData: ImageData) => {
+        setOriginalImageData(newImageData);
+        setWorkImageData(newImageData);
+        generateChannelThumbnails(newImageData);
+
+        const canvas = canvasRef.current;
+        if (canvas) {
+            canvas.width = newImageData.width;
+            canvas.height = newImageData.height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.putImageData(newImageData, 0, 0);
+            }
+        }
+    }, [generateChannelThumbnails]);
+
     const handleCanvasClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
         if (!eyedropperActive || !originalImageData || !canvasRef.current) return;
-        
+
         const canvas = canvasRef.current;
         const rect = canvas.getBoundingClientRect();
         const scaleX = canvas.width / rect.width;
         const scaleY = canvas.height / rect.height;
-        
+
         const mouseX = (event.clientX - rect.left) * scaleX;
         const mouseY = (event.clientY - rect.top) * scaleY;
-        
+
         const x = Math.floor(Math.min(Math.max(mouseX, 0), canvas.width - 1));
         const y = Math.floor(Math.min(Math.max(mouseY, 0), canvas.height - 1));
-        
+
         const idx = (y * canvas.width + x) * 4;
         const pixels = originalImageData.data;
-        
+
         const r = pixels[idx];
         const g = pixels[idx + 1];
         const b = pixels[idx + 2];
         const a = pixels[idx + 3];
-        
+
         const lab = rgbToLab(r, g, b);
-        
+
         setColorInfo({ x, y, r, g, b, a, lab });
         setColorDialogOpen(true);
     }, [eyedropperActive, originalImageData]);
 
-    // Чтение GrayBit-7 файла
     const readGrayBitFile = async (arrayBuffer: ArrayBuffer): Promise<{ imageData: ImageData; header: GrayBitHeader }> => {
         const data = new Uint8Array(arrayBuffer);
-        
+
         const signature = data.slice(0, 4);
         const expectedSignature = new Uint8Array([0x47, 0x42, 0x37, 0x1D]);
-        
+
         for (let i = 0; i < 4; i++) {
             if (signature[i] !== expectedSignature[i]) {
                 throw new Error('Неверный формат GrayBit-7 файла');
             }
         }
-        
+
         const version = data[4];
         const flags = data[5];
         const width = (data[6] << 8) | data[7];
         const height = (data[8] << 8) | data[9];
         const reserved = (data[10] << 8) | data[11];
         const hasMask = (flags & 0x01) === 1;
-        
+
         if (version !== 0x01) {
             throw new Error(`Неподдерживаемая версия GrayBit: ${version}`);
         }
-        
+
         const pixelData = data.slice(12);
         const expectedSize = width * height;
-        
+
         if (pixelData.length < expectedSize) {
             throw new Error('Недостаточно данных в файле');
         }
-        
+
         const imageData = new ImageData(width, height);
-        
+
         for (let i = 0; i < expectedSize; i++) {
             const pixel = pixelData[i];
             const grayValue = pixel & 0x7F;
             const maskBit = (pixel >> 7) & 0x01;
             const rgbValue = Math.round((grayValue / 127) * 255);
             const alpha = (hasMask && maskBit === 0) ? 0 : 255;
-            
+
             imageData.data[i * 4] = rgbValue;
             imageData.data[i * 4 + 1] = rgbValue;
             imageData.data[i * 4 + 2] = rgbValue;
             imageData.data[i * 4 + 3] = alpha;
         }
-        
+
         return {
             imageData,
             header: {
@@ -380,35 +378,34 @@ const ImageEditor: React.FC = () => {
             },
         };
     };
-    
-    // Конвертация в GrayBit-7
+
     const convertToGrayBit = (imageData: ImageData, includeMask: boolean = false): Uint8Array => {
         const width = imageData.width;
         const height = imageData.height;
         const pixels = imageData.data;
         const grayBitBuffer = new Uint8Array(width * height);
-        
+
         for (let i = 0; i < width * height; i++) {
             const r = pixels[i * 4];
             const g = pixels[i * 4 + 1];
             const b = pixels[i * 4 + 2];
             const a = pixels[i * 4 + 3];
-            
+
             const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
             const gray7Bit = Math.round((gray / 255) * 127);
             const maskBit = includeMask ? (a > 128 ? 1 : 0) : 0;
-            
+
             grayBitBuffer[i] = (maskBit << 7) | (gray7Bit & 0x7F);
         }
-        
+
         return grayBitBuffer;
     };
-    
+
     const createGrayBitFile = (imageData: ImageData, includeMask: boolean = false): Uint8Array => {
         const width = imageData.width;
         const height = imageData.height;
         const grayBitData = convertToGrayBit(imageData, includeMask);
-        
+
         const header = new Uint8Array(12);
         header[0] = 0x47; header[1] = 0x42; header[2] = 0x37; header[3] = 0x1D;
         header[4] = 0x01;
@@ -419,32 +416,32 @@ const ImageEditor: React.FC = () => {
         header[9] = height & 0xFF;
         header[10] = 0x00;
         header[11] = 0x00;
-        
+
         const result = new Uint8Array(header.length + grayBitData.length);
         result.set(header);
         result.set(grayBitData, header.length);
-        
+
         return result;
     };
-    
+
     const handleGrayBitUpload = async (file: File) => {
         try {
             const arrayBuffer = await file.arrayBuffer();
             const { imageData, header } = await readGrayBitFile(arrayBuffer);
-            
+
             setOriginalImageData(imageData);
             generateChannelThumbnails(imageData);
-            
+
             const canvas = canvasRef.current;
             if (!canvas) return;
-            
+
             canvas.width = imageData.width;
             canvas.height = imageData.height;
             const ctx = canvas.getContext('2d');
             if (ctx) {
                 ctx.putImageData(imageData, 0, 0);
             }
-            
+
             setImageInfo({
                 width: imageData.width,
                 height: imageData.height,
@@ -454,35 +451,35 @@ const ImageEditor: React.FC = () => {
                 fileType: 'image/graybit-7',
                 hasMask: header.hasMask,
             });
-            
+
             setSelectedImage(URL.createObjectURL(file));
             setGrayBitData(new Uint8Array(arrayBuffer));
             setLoading(false);
-            
+
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Ошибка при загрузке GrayBit-7 файла');
             setLoading(false);
         }
     };
-    
+
     const handleImageUpload = (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
-        
+
         if (file.name.endsWith('.gb7') || file.name.endsWith('.graybit')) {
             setLoading(true);
             handleGrayBitUpload(file);
             return;
         }
-        
+
         if (!file.type.match(/image\/(png|jpeg|jpg)/)) {
             setError('Пожалуйста, загрузите файл в формате PNG, JPG/JPEG или GrayBit-7 (.gb7)');
             return;
         }
-        
+
         setLoading(true);
         setError(null);
-        
+
         const reader = new FileReader();
         reader.onload = (e) => {
             const img = new Image();
@@ -492,7 +489,7 @@ const ImageEditor: React.FC = () => {
                     setLoading(false);
                     return;
                 }
-                
+
                 canvas.width = img.width;
                 canvas.height = img.height;
                 const ctx = canvas.getContext('2d');
@@ -500,14 +497,13 @@ const ImageEditor: React.FC = () => {
                     setLoading(false);
                     return;
                 }
-                
+
                 ctx.drawImage(img, 0, 0, img.width, img.height);
-                
-                // Сохраняем оригинальные данные
+
                 const imageData = ctx.getImageData(0, 0, img.width, img.height);
                 setOriginalImageData(imageData);
                 generateChannelThumbnails(imageData);
-                
+
                 setImageInfo({
                     width: img.width,
                     height: img.height,
@@ -517,7 +513,7 @@ const ImageEditor: React.FC = () => {
                     fileType: file.type,
                     hasMask: false,
                 });
-                
+
                 setSelectedImage(e.target?.result as string);
                 setGrayBitData(null);
                 setLoading(false);
@@ -534,15 +530,14 @@ const ImageEditor: React.FC = () => {
         };
         reader.readAsDataURL(file);
     };
-    
-    // Сброс состояния каналов (показать всё)
+
     const resetChannels = () => {
         setChannels({ red: true, green: true, blue: true, alpha: true });
     };
-    
+
     const handleDownloadGrayBit = (includeMask: boolean = false) => {
         if (!originalImageData) return;
-        
+
         try {
             const grayBitFile = createGrayBitFile(originalImageData, includeMask);
             const blob = new Blob([grayBitFile], { type: 'application/octet-stream' });
@@ -557,11 +552,11 @@ const ImageEditor: React.FC = () => {
             setError('Ошибка при сохранении в GrayBit-7 формате');
         }
     };
-    
+
     const handleDownload = (format: 'png' | 'jpg') => {
         const canvas = canvasRef.current;
         if (!canvas) return;
-        
+
         try {
             const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
             const quality = format === 'jpg' ? 0.92 : undefined;
@@ -575,7 +570,7 @@ const ImageEditor: React.FC = () => {
             setError('Ошибка при скачивании изображения');
         }
     };
-    
+
     const handleClear = () => {
         setSelectedImage(null);
         setImageInfo(null);
@@ -586,7 +581,7 @@ const ImageEditor: React.FC = () => {
         setColorInfo(null);
         setChannelThumbnails({ grayscale: null, grayscaleAlpha: null, rgb: null, rgba: null });
         setChannels({ red: true, green: true, blue: true, alpha: true });
-        
+
         if (canvasRef.current) {
             const ctx = canvasRef.current.getContext('2d');
             if (ctx) {
@@ -599,7 +594,7 @@ const ImageEditor: React.FC = () => {
             fileInputRef.current.value = '';
         }
     };
-    
+
     const formatFileSize = (bytes: number): string => {
         if (bytes === 0) return '0 Bytes';
         const k = 1024;
@@ -607,21 +602,19 @@ const ImageEditor: React.FC = () => {
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
-    
-    // Применяем фильтр каналов при изменении состояния каналов или оригинальных данных
+
     useEffect(() => {
         if (originalImageData) {
             applyChannelFilter();
         }
     }, [originalImageData, channels, applyChannelFilter]);
-    
-    // Обновляем состояние маски для отображения
+
     useEffect(() => {
         if (showMask && originalImageData) {
             setChannels(prev => ({ ...prev, red: false, green: false, blue: false, alpha: true }));
         }
     }, [showMask]);
-    
+
     return (
         <Box>
             <Paper sx={{ p: 3, mb: 3, bgcolor: 'primary.main', color: 'white' }}>
@@ -632,15 +625,14 @@ const ImageEditor: React.FC = () => {
                     Поддерживает PNG, JPG и GrayBit-7 (.gb7) форматы | Цветовые каналы | Пипетка | CIELAB
                 </Typography>
             </Paper>
-            
+
             <Grid container spacing={3}>
-                {/* Левая панель - управление */}
                 <Grid item xs={12} md={3}>
                     <Paper sx={{ p: 3 }}>
                         <Typography variant="h6" gutterBottom>
                             Управление
                         </Typography>
-                        
+
                         <Box sx={{ mb: 3 }}>
                             <input
                                 type="file"
@@ -661,7 +653,7 @@ const ImageEditor: React.FC = () => {
                                     Загрузить изображение
                                 </Button>
                             </label>
-                            
+
                             {selectedImage && (
                                 <>
                                     <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>
@@ -717,9 +709,9 @@ const ImageEditor: React.FC = () => {
                                 </>
                             )}
                         </Box>
-                        
+
                         <Divider sx={{ my: 2 }} />
-                        
+
                         <Typography variant="subtitle2" gutterBottom>
                             Инструменты:
                         </Typography>
@@ -735,21 +727,19 @@ const ImageEditor: React.FC = () => {
                                 Пипетка {eyedropperActive && "(активна)"}
                             </Button>
                         </Tooltip>
-                        
-                        {imageInfo?.hasMask && (
-                            <FormControlLabel
-                                control={
-                                    <Switch
-                                        checked={showMask}
-                                        onChange={(e) => setShowMask(e.target.checked)}
-                                        color="primary"
-                                    />
-                                }
-                                label="Показать только маску"
-                                sx={{ mt: 2 }}
-                            />
-                        )}
-                        
+                        <Tooltip title="Коррекция уровней (Levels)">
+                            <Button
+                                variant="outlined"
+                                color="primary"
+                                fullWidth
+                                startIcon={<LevelsIcon />}
+                                onClick={() => setLevelsDialogOpen(true)}
+                                sx={{ mb: 2 }}
+                                disabled={!originalImageData}
+                            >
+                                Уровни (Levels)
+                            </Button>
+                        </Tooltip>
                         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
                             <strong>Инструкция:</strong>
                             <br />
@@ -764,7 +754,7 @@ const ImageEditor: React.FC = () => {
                             <br />
                             <strong>CIELAB:</strong> L* (светлота), a* (зеленый-красный), b* (синий-желтый)
                         </Typography>
-                        
+
                         {error && (
                             <Alert severity="error" sx={{ mt: 2 }}>
                                 {error}
@@ -772,14 +762,13 @@ const ImageEditor: React.FC = () => {
                         )}
                     </Paper>
                 </Grid>
-                
-                {/* Центральная панель - холст */}
+
                 <Grid item xs={12} md={6}>
                     <Paper sx={{ p: 3 }}>
                         <Typography variant="h6" gutterBottom>
                             Просмотр изображения
                         </Typography>
-                        
+
                         <Box
                             sx={{
                                 display: 'flex',
@@ -798,14 +787,14 @@ const ImageEditor: React.FC = () => {
                                     <Typography sx={{ mt: 2 }}>Загрузка изображения...</Typography>
                                 </Box>
                             )}
-                            
+
                             {!loading && !selectedImage && (
                                 <Box sx={{ textAlign: 'center', color: 'text.secondary' }}>
                                     <ImageIcon sx={{ fontSize: 64, mb: 2, opacity: 0.5 }} />
                                     <Typography>Изображение не загружено</Typography>
                                 </Box>
                             )}
-                            
+
                             <canvas
                                 ref={canvasRef}
                                 onClick={handleCanvasClick}
@@ -818,12 +807,11 @@ const ImageEditor: React.FC = () => {
                                 }}
                             />
                         </Box>
-                        
-                        {/* Информация о цвете */}
+
                         {colorInfo && (
                             <Alert severity="info" sx={{ mt: 2 }} onClose={() => setColorInfo(null)}>
                                 <Typography variant="body2">
-                                    Пиксель ({colorInfo.x}, {colorInfo.y}): 
+                                    Пиксель ({colorInfo.x}, {colorInfo.y}):
                                     RGB({colorInfo.r}, {colorInfo.g}, {colorInfo.b})
                                     {' | '}
                                     CIELAB(L*={colorInfo.lab.L}, a*={colorInfo.lab.a}, b*={colorInfo.lab.b})
@@ -832,8 +820,7 @@ const ImageEditor: React.FC = () => {
                         )}
                     </Paper>
                 </Grid>
-                
-                {/* Правая панель - каналы */}
+
                 <Grid item xs={12} md={3}>
                     <Paper sx={{ p: 3 }}>
                         <Typography variant="h6" gutterBottom>
@@ -842,8 +829,7 @@ const ImageEditor: React.FC = () => {
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                             Кликните на миниатюру, чтобы включить/выключить канал
                         </Typography>
-                        
-                        {/* Grayscale */}
+
                         <ThumbnailContainer onClick={() => setChannels({ red: true, green: true, blue: true, alpha: false })}>
                             <Typography variant="caption" gutterBottom display="block" align="center">
                                 1. Grayscale
@@ -854,8 +840,7 @@ const ImageEditor: React.FC = () => {
                                 <ChannelCanvas width={80} height={80} />
                             )}
                         </ThumbnailContainer>
-                        
-                        {/* Grayscale + Alpha */}
+
                         <ThumbnailContainer onClick={() => setChannels({ red: true, green: true, blue: true, alpha: true })}>
                             <Typography variant="caption" gutterBottom display="block" align="center">
                                 2. Grayscale + Alpha
@@ -866,8 +851,7 @@ const ImageEditor: React.FC = () => {
                                 <ChannelCanvas width={80} height={80} />
                             )}
                         </ThumbnailContainer>
-                        
-                        {/* RGB */}
+
                         <ThumbnailContainer onClick={() => setChannels({ red: true, green: true, blue: true, alpha: false })}>
                             <Typography variant="caption" gutterBottom display="block" align="center">
                                 3. RGB
@@ -878,8 +862,7 @@ const ImageEditor: React.FC = () => {
                                 <ChannelCanvas width={80} height={80} />
                             )}
                         </ThumbnailContainer>
-                        
-                        {/* RGB + Alpha */}
+
                         <ThumbnailContainer onClick={() => setChannels({ red: true, green: true, blue: true, alpha: true })}>
                             <Typography variant="caption" gutterBottom display="block" align="center">
                                 4. RGB + Alpha
@@ -890,13 +873,13 @@ const ImageEditor: React.FC = () => {
                                 <ChannelCanvas width={80} height={80} />
                             )}
                         </ThumbnailContainer>
-                        
+
                         <Divider sx={{ my: 2 }} />
-                        
+
                         <Typography variant="subtitle2" gutterBottom>
                             Отдельные каналы:
                         </Typography>
-                        
+
                         <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
                             <Chip
                                 label="R"
@@ -924,7 +907,7 @@ const ImageEditor: React.FC = () => {
                                 icon={<OpacityIcon />}
                             />
                         </Stack>
-                        
+
                         <Button
                             variant="text"
                             size="small"
@@ -937,8 +920,7 @@ const ImageEditor: React.FC = () => {
                     </Paper>
                 </Grid>
             </Grid>
-            
-            {/* Информационная панель внизу */}
+
             {imageInfo && (
                 <Paper
                     sx={{
@@ -989,8 +971,7 @@ const ImageEditor: React.FC = () => {
                     </Grid>
                 </Paper>
             )}
-            
-            {/* Диалог с детальной информацией о цвете */}
+
             <Dialog open={colorDialogOpen} onClose={() => setColorDialogOpen(false)} maxWidth="sm" fullWidth>
                 <DialogTitle>
                     <Stack direction="row" alignItems="center" spacing={1}>
@@ -1040,8 +1021,20 @@ const ImageEditor: React.FC = () => {
                     )}
                 </DialogContent>
             </Dialog>
-            
+
             {imageInfo && <Box sx={{ mb: 8 }} />}
+            <LevelsDialog
+                open={levelsDialogOpen}
+                onClose={(apply) => {
+                    setLevelsDialogOpen(false);
+                    if (!apply && workImageData && originalImageData !== workImageData) {
+                        handleApplyLevels(workImageData);
+                    }
+                }}
+                originalImageData={originalImageData}
+                currentImageData={workImageData}
+                onApplyLevels={handleApplyLevels}
+            />
         </Box>
     );
 };
