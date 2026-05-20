@@ -10,8 +10,6 @@ import {
     Divider,
     Chip,
     Stack,
-    FormControlLabel,
-    Switch,
     Tooltip,
     Dialog,
     DialogTitle,
@@ -31,11 +29,16 @@ import {
     Save as SaveIcon,
     ColorLens as ColorLensIcon,
     Opacity as OpacityIcon,
-    BarChart as LevelsIcon
+    BarChart as LevelsIcon,
 } from '@mui/icons-material';
 import LevelsDialog from './LevelsDialog';
+import ScaleModal from './ScaleModal';
+import ScaleControl from './ScaleControl';
+import ImageCanvas, { ImageCanvasRef } from './ImageCanvas';
+import ImageInfo from './ImageInfo';
+import { convertToGrayscale, scaleImage } from '../utils/interpolation';
 
-interface ImageInfo {
+interface ImageInfoData {
     width: number;
     height: number;
     colorDepth: number;
@@ -86,7 +89,7 @@ const rgbToLab = (r: number, g: number, b: number): { L: number; a: number; b: n
 
     const X = var_R * 0.4124564 + var_G * 0.3575761 + var_B * 0.1804375;
     const Y = var_R * 0.2126729 + var_G * 0.7151522 + var_B * 0.0721750;
-    const Z = var_R * 0.0193339 + var_G * 0.1191920 + var_B * 0.9503041;
+    const Z = var_R * 0.0193349 + var_G * 0.1191920 + var_B * 0.9503041;
 
     const refX = 95.047;
     const refY = 100.000;
@@ -132,16 +135,20 @@ const ChannelCanvas = styled('canvas')({
 
 const ImageEditor: React.FC = () => {
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
-    const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
+    const [imageInfo, setImageInfo] = useState<ImageInfoData | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [grayBitData, setGrayBitData] = useState<Uint8Array | null>(null);
     const [showMask, setShowMask] = useState<boolean>(false);
-
+    const [displayMode, setDisplayMode] = useState<'normal' | 'grayscale' | 'grayscale-alpha' | 'rgb' | 'rgba'>('normal');
     const [levelsDialogOpen, setLevelsDialogOpen] = useState<boolean>(false);
-    const [workImageData, setWorkImageData] = useState<ImageData | null>(null);
-
-    const [originalImageData, setOriginalImageData] = useState<ImageData | null>(null);
+    
+    const [baseImageData, setBaseImageData] = useState<ImageData | null>(null);
+    const [originalLoadedImageData, setOriginalLoadedImageData] = useState<ImageData | null>(null);
+    const [displayImageData, setDisplayImageData] = useState<ImageData | null>(null);
+    const [displayScalePercent, setDisplayScalePercent] = useState<number>(100);
+    const [displayScaleMethod, setDisplayScaleMethod] = useState<'bilinear' | 'nearest-neighbor'>('bilinear');
+    const isFirstScaleRef = useRef<boolean>(true);
 
     const [channels, setChannels] = useState<ChannelState>({
         red: true,
@@ -153,6 +160,7 @@ const ImageEditor: React.FC = () => {
     const [eyedropperActive, setEyedropperActive] = useState<boolean>(false);
     const [colorInfo, setColorInfo] = useState<ColorInfo | null>(null);
     const [colorDialogOpen, setColorDialogOpen] = useState<boolean>(false);
+    const [scaleModalOpen, setScaleModalOpen] = useState<boolean>(false);
 
     const [channelThumbnails, setChannelThumbnails] = useState<{
         grayscale: string | null;
@@ -166,44 +174,84 @@ const ImageEditor: React.FC = () => {
         rgba: null,
     });
 
-    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const canvasRef = useRef<ImageCanvasRef>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
 
-    const applyChannelFilter = useCallback(() => {
-        if (!originalImageData || !canvasRef.current) return;
-
-        const width = originalImageData.width;
-        const height = originalImageData.height;
-        const originalPixels = originalImageData.data;
-
-        const outputImageData = new ImageData(width, height);
-        const outputPixels = outputImageData.data;
-
+    const applyChannelsToImageData = useCallback((imageData: ImageData, channelState: ChannelState, mode: 'normal' | 'grayscale' | 'grayscale-alpha' | 'rgb' | 'rgba' = 'normal'): ImageData => {
+        const width = imageData.width;
+        const height = imageData.height;
+        const srcPixels = imageData.data;
+        const result = new ImageData(width, height);
+        const dstPixels = result.data;
+        
+        let processedData: ImageData;
+        
+        switch (mode) {
+            case 'grayscale':
+                processedData = convertToGrayscale(imageData);
+                break;
+            case 'grayscale-alpha':
+                processedData = convertToGrayscale(imageData);
+                break;
+            default:
+                processedData = new ImageData(width, height);
+                const tempPixels = processedData.data;
+                for (let i = 0; i < width * height; i++) {
+                    const idx = i * 4;
+                    tempPixels[idx] = srcPixels[idx];
+                    tempPixels[idx + 1] = srcPixels[idx + 1];
+                    tempPixels[idx + 2] = srcPixels[idx + 2];
+                    tempPixels[idx + 3] = srcPixels[idx + 3];
+                }
+        }
+        
+        const processedPixels = processedData.data;
+        
         for (let i = 0; i < width * height; i++) {
             const idx = i * 4;
-            let r = originalPixels[idx];
-            let g = originalPixels[idx + 1];
-            let b = originalPixels[idx + 2];
-            let a = originalPixels[idx + 3];
-
-            if (!channels.red) r = 0;
-            if (!channels.green) g = 0;
-            if (!channels.blue) b = 0;
-            if (!channels.alpha) a = 255; 
-
-            outputPixels[idx] = r;
-            outputPixels[idx + 1] = g;
-            outputPixels[idx + 2] = b;
-            outputPixels[idx + 3] = a;
+            let r = processedPixels[idx];
+            let g = processedPixels[idx + 1];
+            let b = processedPixels[idx + 2];
+            let a = processedPixels[idx + 3];
+            
+            if (!channelState.red) r = 0;
+            if (!channelState.green) g = 0;
+            if (!channelState.blue) b = 0;
+            if (!channelState.alpha) a = 255;
+            
+            dstPixels[idx] = r;
+            dstPixels[idx + 1] = g;
+            dstPixels[idx + 2] = b;
+            dstPixels[idx + 3] = a;
         }
+        
+        return result;
+    }, []);
 
-        const ctx = canvasRef.current.getContext('2d');
-        if (ctx) {
-            canvasRef.current.width = width;
-            canvasRef.current.height = height;
-            ctx.putImageData(outputImageData, 0, 0);
+    const updateDisplayImage = useCallback(() => {
+        if (!baseImageData) {
+            setDisplayImageData(null);
+            return;
         }
-    }, [originalImageData, channels]);
+        
+        let mode: 'normal' | 'grayscale' | 'grayscale-alpha' | 'rgb' | 'rgba' = 'normal';
+        if (displayMode === 'grayscale') mode = 'grayscale';
+        else if (displayMode === 'grayscale-alpha') mode = 'grayscale-alpha';
+        else if (displayMode === 'rgb') mode = 'rgb';
+        else if (displayMode === 'rgba') mode = 'rgba';
+        
+        const filteredImageData = applyChannelsToImageData(baseImageData, channels, mode);
+        
+        if (displayScalePercent !== 100) {
+            const scaledWidth = Math.max(1, Math.round(baseImageData.width * (displayScalePercent / 100)));
+            const scaledHeight = Math.max(1, Math.round(baseImageData.height * (displayScalePercent / 100)));
+            const scaledImageData = scaleImage(filteredImageData, scaledWidth, scaledHeight, displayScaleMethod);
+            setDisplayImageData(scaledImageData);
+        } else {
+            setDisplayImageData(filteredImageData);
+        }
+    }, [baseImageData, channels, displayScalePercent, displayScaleMethod, displayMode, applyChannelsToImageData]);
 
     const generateChannelThumbnails = useCallback((imageData: ImageData) => {
         const width = imageData.width;
@@ -277,48 +325,71 @@ const ImageEditor: React.FC = () => {
     }, []);
 
     const handleApplyLevels = useCallback((newImageData: ImageData) => {
-        setOriginalImageData(newImageData);
-        setWorkImageData(newImageData);
+        setBaseImageData(newImageData);
         generateChannelThumbnails(newImageData);
-
-        const canvas = canvasRef.current;
-        if (canvas) {
-            canvas.width = newImageData.width;
-            canvas.height = newImageData.height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-                ctx.putImageData(newImageData, 0, 0);
-            }
-        }
     }, [generateChannelThumbnails]);
 
-    const handleCanvasClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
-        if (!eyedropperActive || !originalImageData || !canvasRef.current) return;
+    const handleApplyScale = useCallback((scaledImageData: ImageData, newScalePercent: number) => {
+        setBaseImageData(scaledImageData);
+        setDisplayScalePercent(100);
+        generateChannelThumbnails(scaledImageData);
+        
+        if (imageInfo) {
+            setImageInfo({
+                ...imageInfo,
+                width: scaledImageData.width,
+                height: scaledImageData.height,
+            });
+        }
+    }, [imageInfo, generateChannelThumbnails]);
 
-        const canvas = canvasRef.current;
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
+    const handleScaleForDisplay = useCallback((_scaledImageData: ImageData, scalePercent: number) => {
+        setDisplayScalePercent(scalePercent);
+    }, []);
 
-        const mouseX = (event.clientX - rect.left) * scaleX;
-        const mouseY = (event.clientY - rect.top) * scaleY;
+    useEffect(() => {
+        updateDisplayImage();
+    }, [updateDisplayImage]);
 
-        const x = Math.floor(Math.min(Math.max(mouseX, 0), canvas.width - 1));
-        const y = Math.floor(Math.min(Math.max(mouseY, 0), canvas.height - 1));
+    const setNewImageData = useCallback((imageData: ImageData, fileInfo: Omit<ImageInfoData, 'width' | 'height'>) => {
+        setBaseImageData(imageData);
+        setOriginalLoadedImageData(imageData);
+        setDisplayScalePercent(100);
+        generateChannelThumbnails(imageData);
+        
+        setImageInfo({
+            ...fileInfo,
+            width: imageData.width,
+            height: imageData.height,
+        });
+    }, [generateChannelThumbnails]);
 
-        const idx = (y * canvas.width + x) * 4;
-        const pixels = originalImageData.data;
+    const handleCanvasClick = useCallback((_event: React.MouseEvent<HTMLCanvasElement>, x: number, y: number, color: { r: number; g: number; b: number; a: number }) => {
+        if (!eyedropperActive || !displayImageData) return;
 
-        const r = pixels[idx];
-        const g = pixels[idx + 1];
-        const b = pixels[idx + 2];
-        const a = pixels[idx + 3];
-
-        const lab = rgbToLab(r, g, b);
-
-        setColorInfo({ x, y, r, g, b, a, lab });
-        setColorDialogOpen(true);
-    }, [eyedropperActive, originalImageData]);
+        if (baseImageData) {
+            const scaleX = baseImageData.width / displayImageData.width;
+            const scaleY = baseImageData.height / displayImageData.height;
+            const origX = Math.floor(x * scaleX);
+            const origY = Math.floor(y * scaleY);
+            
+            if (origX >= 0 && origX < baseImageData.width && origY >= 0 && origY < baseImageData.height) {
+                const idx = (origY * baseImageData.width + origX) * 4;
+                const pixels = baseImageData.data;
+                const lab = rgbToLab(pixels[idx], pixels[idx + 1], pixels[idx + 2]);
+                setColorInfo({ 
+                    x: origX, 
+                    y: origY, 
+                    r: pixels[idx], 
+                    g: pixels[idx + 1], 
+                    b: pixels[idx + 2], 
+                    a: pixels[idx + 3], 
+                    lab 
+                });
+                setColorDialogOpen(true);
+            }
+        }
+    }, [eyedropperActive, displayImageData, baseImageData]);
 
     const readGrayBitFile = async (arrayBuffer: ArrayBuffer): Promise<{ imageData: ImageData; header: GrayBitHeader }> => {
         const data = new Uint8Array(arrayBuffer);
@@ -429,22 +500,7 @@ const ImageEditor: React.FC = () => {
             const arrayBuffer = await file.arrayBuffer();
             const { imageData, header } = await readGrayBitFile(arrayBuffer);
 
-            setOriginalImageData(imageData);
-            generateChannelThumbnails(imageData);
-
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-
-            canvas.width = imageData.width;
-            canvas.height = imageData.height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-                ctx.putImageData(imageData, 0, 0);
-            }
-
-            setImageInfo({
-                width: imageData.width,
-                height: imageData.height,
+            setNewImageData(imageData, {
                 colorDepth: header.hasMask ? 8 : 7,
                 fileSize: file.size,
                 fileName: file.name,
@@ -484,38 +540,25 @@ const ImageEditor: React.FC = () => {
         reader.onload = (e) => {
             const img = new Image();
             img.onload = () => {
-                const canvas = canvasRef.current;
-                if (!canvas) {
-                    setLoading(false);
-                    return;
-                }
-
+                const canvas = document.createElement('canvas');
                 canvas.width = img.width;
                 canvas.height = img.height;
                 const ctx = canvas.getContext('2d');
-                if (!ctx) {
-                    setLoading(false);
-                    return;
+                if (ctx) {
+                    ctx.drawImage(img, 0, 0);
+                    const data = ctx.getImageData(0, 0, img.width, img.height);
+                    
+                    setNewImageData(data, {
+                        colorDepth: 24,
+                        fileSize: file.size,
+                        fileName: file.name,
+                        fileType: file.type,
+                        hasMask: false,
+                    });
+
+                    setSelectedImage(e.target?.result as string);
+                    setGrayBitData(null);
                 }
-
-                ctx.drawImage(img, 0, 0, img.width, img.height);
-
-                const imageData = ctx.getImageData(0, 0, img.width, img.height);
-                setOriginalImageData(imageData);
-                generateChannelThumbnails(imageData);
-
-                setImageInfo({
-                    width: img.width,
-                    height: img.height,
-                    colorDepth: 24,
-                    fileSize: file.size,
-                    fileName: file.name,
-                    fileType: file.type,
-                    hasMask: false,
-                });
-
-                setSelectedImage(e.target?.result as string);
-                setGrayBitData(null);
                 setLoading(false);
             };
             img.onerror = () => {
@@ -531,15 +574,36 @@ const ImageEditor: React.FC = () => {
         reader.readAsDataURL(file);
     };
 
-    const resetChannels = () => {
+    const setGrayscaleMode = useCallback(() => {
+        setDisplayMode('grayscale');
+        setChannels({ red: true, green: true, blue: true, alpha: false });
+    }, []);
+
+    const setGrayscaleAlphaMode = useCallback(() => {
+        setDisplayMode('grayscale-alpha');
         setChannels({ red: true, green: true, blue: true, alpha: true });
-    };
+    }, []);
+
+    const setRGBMode = useCallback(() => {
+        setDisplayMode('rgb');
+        setChannels({ red: true, green: true, blue: true, alpha: false });
+    }, []);
+
+    const setRGBAMode = useCallback(() => {
+        setDisplayMode('rgba');
+        setChannels({ red: true, green: true, blue: true, alpha: true });
+    }, []);
+
+    const resetChannels = useCallback(() => {
+        setDisplayMode('normal');
+        setChannels({ red: true, green: true, blue: true, alpha: true });
+    }, []);
 
     const handleDownloadGrayBit = (includeMask: boolean = false) => {
-        if (!originalImageData) return;
+        if (!baseImageData) return;
 
         try {
-            const grayBitFile = createGrayBitFile(originalImageData, includeMask);
+            const grayBitFile = createGrayBitFile(baseImageData, includeMask);
             const blob = new Blob([grayBitFile], { type: 'application/octet-stream' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -554,20 +618,27 @@ const ImageEditor: React.FC = () => {
     };
 
     const handleDownload = (format: 'png' | 'jpg') => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-
-        try {
-            const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
-            const quality = format === 'jpg' ? 0.92 : undefined;
-            const dataURL = canvas.toDataURL(mimeType, quality);
-            const link = document.createElement('a');
-            const timestamp = new Date().getTime();
-            link.download = `image_${timestamp}.${format}`;
-            link.href = dataURL;
-            link.click();
-        } catch (error) {
-            setError('Ошибка при скачивании изображения');
+        if (!displayImageData) return;
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = displayImageData.width;
+        canvas.height = displayImageData.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.putImageData(displayImageData, 0, 0);
+            
+            try {
+                const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
+                const quality = format === 'jpg' ? 0.92 : undefined;
+                const dataURL = canvas.toDataURL(mimeType, quality);
+                const link = document.createElement('a');
+                const timestamp = new Date().getTime();
+                link.download = `image_${timestamp}.${format}`;
+                link.href = dataURL;
+                link.click();
+            } catch (error) {
+                setError('Ошибка при скачивании изображения');
+            }
         }
     };
 
@@ -576,56 +647,40 @@ const ImageEditor: React.FC = () => {
         setImageInfo(null);
         setError(null);
         setGrayBitData(null);
-        setOriginalImageData(null);
+        setBaseImageData(null);
+        setOriginalLoadedImageData(null);
+        setDisplayImageData(null);
+        setDisplayScalePercent(100);
         setEyedropperActive(false);
         setColorInfo(null);
         setChannelThumbnails({ grayscale: null, grayscaleAlpha: null, rgb: null, rgba: null });
         setChannels({ red: true, green: true, blue: true, alpha: true });
+        setDisplayMode('normal');
 
-        if (canvasRef.current) {
-            const ctx = canvasRef.current.getContext('2d');
-            if (ctx) {
-                canvasRef.current.width = 0;
-                canvasRef.current.height = 0;
-                ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-            }
-        }
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
     };
 
-    const formatFileSize = (bytes: number): string => {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    };
-
     useEffect(() => {
-        if (originalImageData) {
-            applyChannelFilter();
-        }
-    }, [originalImageData, channels, applyChannelFilter]);
-
-    useEffect(() => {
-        if (showMask && originalImageData) {
-            setChannels(prev => ({ ...prev, red: false, green: false, blue: false, alpha: true }));
-        }
-    }, [showMask]);
+        const handleOpenScaleModal = () => setScaleModalOpen(true);
+        window.addEventListener('openScaleModal', handleOpenScaleModal);
+        return () => window.removeEventListener('openScaleModal', handleOpenScaleModal);
+    }, []);
 
     return (
-        <Box>
-            <Paper sx={{ p: 3, mb: 3, bgcolor: 'primary.main', color: 'white' }}>
-                <Typography variant="h4" align="center" gutterBottom>
-                    Редактор изображений
-                </Typography>
-                <Typography variant="subtitle1" align="center">
-                    Поддерживает PNG, JPG и GrayBit-7 (.gb7) форматы | Цветовые каналы | Пипетка | CIELAB
-                </Typography>
-            </Paper>
-
+        <Box ref={containerRef}>
+            {baseImageData && (
+                <ScaleControl
+                    originalImageData={baseImageData}
+                    onScaledImageChange={handleScaleForDisplay}
+                    containerRef={containerRef}
+                    onOpenScaleModal={() => setScaleModalOpen(true)}
+                    externalScale={displayScalePercent}
+                    onScaleChange={(newScale) => setDisplayScalePercent(newScale)}
+                />
+            )}
+            
             <Grid container spacing={3}>
                 <Grid item xs={12} md={3}>
                     <Paper sx={{ p: 3 }}>
@@ -735,7 +790,7 @@ const ImageEditor: React.FC = () => {
                                 startIcon={<LevelsIcon />}
                                 onClick={() => setLevelsDialogOpen(true)}
                                 sx={{ mb: 2 }}
-                                disabled={!originalImageData}
+                                disabled={!baseImageData}
                             >
                                 Уровни (Levels)
                             </Button>
@@ -745,11 +800,13 @@ const ImageEditor: React.FC = () => {
                             <br />
                             1. Загрузите изображение
                             <br />
-                            2. Управляйте каналами на панели справа
+                            2. Используйте слайдер масштаба для изменения отображения
                             <br />
-                            3. Включите пипетку и кликните на изображение
+                            3. Управляйте каналами на панели справа
                             <br />
-                            4. Сохраните в нужном формате
+                            4. Включите пипетку и кликните на изображение
+                            <br />
+                            5. Сохраните в нужном формате
                             <br />
                             <br />
                             <strong>CIELAB:</strong> L* (светлота), a* (зеленый-красный), b* (синий-желтый)
@@ -769,44 +826,13 @@ const ImageEditor: React.FC = () => {
                             Просмотр изображения
                         </Typography>
 
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'center',
-                                alignItems: 'center',
-                                minHeight: 400,
-                                bgcolor: '#f5f5f5',
-                                borderRadius: 1,
-                                position: 'relative',
-                                border: '1px solid #e0e0e0',
-                            }}
-                        >
-                            {loading && (
-                                <Box sx={{ textAlign: 'center' }}>
-                                    <CircularProgress />
-                                    <Typography sx={{ mt: 2 }}>Загрузка изображения...</Typography>
-                                </Box>
-                            )}
-
-                            {!loading && !selectedImage && (
-                                <Box sx={{ textAlign: 'center', color: 'text.secondary' }}>
-                                    <ImageIcon sx={{ fontSize: 64, mb: 2, opacity: 0.5 }} />
-                                    <Typography>Изображение не загружено</Typography>
-                                </Box>
-                            )}
-
-                            <canvas
-                                ref={canvasRef}
-                                onClick={handleCanvasClick}
-                                style={{
-                                    maxWidth: '100%',
-                                    height: 'auto',
-                                    display: selectedImage ? 'block' : 'none',
-                                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-                                    cursor: eyedropperActive ? 'crosshair' : 'default',
-                                }}
-                            />
-                        </Box>
+                        <ImageCanvas
+                            ref={canvasRef}
+                            imageData={displayImageData}
+                            isLoading={loading}
+                            onClick={handleCanvasClick}
+                            cursor={eyedropperActive ? 'crosshair' : 'default'}
+                        />
 
                         {colorInfo && (
                             <Alert severity="info" sx={{ mt: 2 }} onClose={() => setColorInfo(null)}>
@@ -827,12 +853,12 @@ const ImageEditor: React.FC = () => {
                             Цветовые каналы
                         </Typography>
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                            Кликните на миниатюру, чтобы включить/выключить канал
+                            Кликните на миниатюру, чтобы применить пресет каналов
                         </Typography>
 
-                        <ThumbnailContainer onClick={() => setChannels({ red: true, green: true, blue: true, alpha: false })}>
+                        <ThumbnailContainer onClick={setGrayscaleMode}>
                             <Typography variant="caption" gutterBottom display="block" align="center">
-                                1. Grayscale
+                                1. Grayscale (только яркость)
                             </Typography>
                             {channelThumbnails.grayscale ? (
                                 <img src={channelThumbnails.grayscale} alt="Grayscale" style={{ width: '80px', height: '80px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
@@ -841,9 +867,9 @@ const ImageEditor: React.FC = () => {
                             )}
                         </ThumbnailContainer>
 
-                        <ThumbnailContainer onClick={() => setChannels({ red: true, green: true, blue: true, alpha: true })}>
+                        <ThumbnailContainer onClick={setGrayscaleAlphaMode}>
                             <Typography variant="caption" gutterBottom display="block" align="center">
-                                2. Grayscale + Alpha
+                                2. Grayscale + Alpha (с прозрачностью)
                             </Typography>
                             {channelThumbnails.grayscaleAlpha ? (
                                 <img src={channelThumbnails.grayscaleAlpha} alt="Grayscale + Alpha" style={{ width: '80px', height: '80px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
@@ -852,9 +878,9 @@ const ImageEditor: React.FC = () => {
                             )}
                         </ThumbnailContainer>
 
-                        <ThumbnailContainer onClick={() => setChannels({ red: true, green: true, blue: true, alpha: false })}>
+                        <ThumbnailContainer onClick={setRGBMode}>
                             <Typography variant="caption" gutterBottom display="block" align="center">
-                                3. RGB
+                                3. RGB (без альфа-канала)
                             </Typography>
                             {channelThumbnails.rgb ? (
                                 <img src={channelThumbnails.rgb} alt="RGB" style={{ width: '80px', height: '80px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
@@ -863,9 +889,9 @@ const ImageEditor: React.FC = () => {
                             )}
                         </ThumbnailContainer>
 
-                        <ThumbnailContainer onClick={() => setChannels({ red: true, green: true, blue: true, alpha: true })}>
+                        <ThumbnailContainer onClick={setRGBAMode}>
                             <Typography variant="caption" gutterBottom display="block" align="center">
-                                4. RGB + Alpha
+                                4. RGBA (все каналы)
                             </Typography>
                             {channelThumbnails.rgba ? (
                                 <img src={channelThumbnails.rgba} alt="RGBA" style={{ width: '80px', height: '80px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
@@ -877,30 +903,30 @@ const ImageEditor: React.FC = () => {
                         <Divider sx={{ my: 2 }} />
 
                         <Typography variant="subtitle2" gutterBottom>
-                            Отдельные каналы:
+                            Отдельные каналы (чекбоксы):
                         </Typography>
 
                         <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
                             <Chip
-                                label="R"
+                                label="R (Красный)"
                                 onClick={() => setChannels(prev => ({ ...prev, red: !prev.red }))}
                                 color={channels.red ? "error" : "default"}
                                 variant={channels.red ? "filled" : "outlined"}
                             />
                             <Chip
-                                label="G"
+                                label="G (Зеленый)"
                                 onClick={() => setChannels(prev => ({ ...prev, green: !prev.green }))}
                                 color={channels.green ? "success" : "default"}
                                 variant={channels.green ? "filled" : "outlined"}
                             />
                             <Chip
-                                label="B"
+                                label="B (Синий)"
                                 onClick={() => setChannels(prev => ({ ...prev, blue: !prev.blue }))}
                                 color={channels.blue ? "primary" : "default"}
                                 variant={channels.blue ? "filled" : "outlined"}
                             />
                             <Chip
-                                label="A"
+                                label="A (Альфа)"
                                 onClick={() => setChannels(prev => ({ ...prev, alpha: !prev.alpha }))}
                                 color={channels.alpha ? "secondary" : "default"}
                                 variant={channels.alpha ? "filled" : "outlined"}
@@ -915,125 +941,41 @@ const ImageEditor: React.FC = () => {
                             onClick={resetChannels}
                             sx={{ mt: 1 }}
                         >
-                            Сбросить все каналы
+                            Сбросить все каналы (включить всё)
                         </Button>
                     </Paper>
                 </Grid>
             </Grid>
 
             {imageInfo && (
-                <Paper
-                    sx={{
-                        position: 'fixed',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        p: 2,
-                        bgcolor: '#263238',
-                        color: 'white',
-                        zIndex: 1000,
-                        borderRadius: 0,
-                    }}
-                >
-                    <Grid container spacing={2} alignItems="center">
-                        <Grid item xs={12} sm={6} md={3}>
-                            <Stack direction="row" spacing={1} alignItems="center">
-                                <InfoIcon fontSize="small" />
-                                <Typography variant="body2">
-                                    <strong>Файл:</strong> {imageInfo.fileName}
-                                </Typography>
-                            </Stack>
-                        </Grid>
-                        <Grid item xs={6} sm={3} md={2}>
-                            <Typography variant="body2">
-                                <strong>Размер:</strong> {formatFileSize(imageInfo.fileSize)}
-                            </Typography>
-                        </Grid>
-                        <Grid item xs={6} sm={3} md={2}>
-                            <Typography variant="body2">
-                                <strong>Ширина:</strong> {imageInfo.width} px
-                            </Typography>
-                        </Grid>
-                        <Grid item xs={6} sm={3} md={2}>
-                            <Typography variant="body2">
-                                <strong>Высота:</strong> {imageInfo.height} px
-                            </Typography>
-                        </Grid>
-                        <Grid item xs={6} sm={3} md={3}>
-                            <Typography variant="body2">
-                                <strong>Каналы:</strong>{' '}
-                                {channels.red && 'R '}
-                                {channels.green && 'G '}
-                                {channels.blue && 'B '}
-                                {channels.alpha && 'A'}
-                            </Typography>
-                        </Grid>
-                    </Grid>
-                </Paper>
+                <ImageInfo
+                    fileName={imageInfo.fileName}
+                    fileSize={imageInfo.fileSize}
+                    width={baseImageData?.width || imageInfo.width}
+                    height={baseImageData?.height || imageInfo.height}
+                    colorDepth={imageInfo.colorDepth}
+                    visibleChannels={channels}
+                />
             )}
 
-            <Dialog open={colorDialogOpen} onClose={() => setColorDialogOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>
-                    <Stack direction="row" alignItems="center" spacing={1}>
-                        <ColorLensIcon color="primary" />
-                        <Typography>Информация о цвете пикселя</Typography>
-                    </Stack>
-                </DialogTitle>
-                <DialogContent>
-                    {colorInfo && (
-                        <Table size="small">
-                            <TableBody>
-                                <TableRow>
-                                    <TableCell variant="head"><strong>Координаты</strong></TableCell>
-                                    <TableCell>X = {colorInfo.x}, Y = {colorInfo.y}</TableCell>
-                                </TableRow>
-                                <TableRow>
-                                    <TableCell variant="head"><strong>RGB</strong></TableCell>
-                                    <TableCell>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                            <Box
-                                                sx={{
-                                                    width: 40,
-                                                    height: 40,
-                                                    backgroundColor: `rgba(${colorInfo.r}, ${colorInfo.g}, ${colorInfo.b}, ${colorInfo.a / 255})`,
-                                                    border: '1px solid #ccc',
-                                                    borderRadius: 1,
-                                                }}
-                                            />
-                                            <span>R: {colorInfo.r}, G: {colorInfo.g}, B: {colorInfo.b}</span>
-                                        </Box>
-                                    </TableCell>
-                                </TableRow>
-                                <TableRow>
-                                    <TableCell variant="head"><strong>Прозрачность (Alpha)</strong></TableCell>
-                                    <TableCell>{Math.round((colorInfo.a / 255) * 100)}% ({colorInfo.a})</TableCell>
-                                </TableRow>
-                                <TableRow>
-                                    <TableCell variant="head"><strong>CIELAB</strong></TableCell>
-                                    <TableCell>
-                                        L*: {colorInfo.lab.L}<br />
-                                        a*: {colorInfo.lab.a}<br />
-                                        b*: {colorInfo.lab.b}
-                                    </TableCell>
-                                </TableRow>
-                            </TableBody>
-                        </Table>
-                    )}
-                </DialogContent>
-            </Dialog>
-
             {imageInfo && <Box sx={{ mb: 8 }} />}
+            
             <LevelsDialog
                 open={levelsDialogOpen}
                 onClose={(apply) => {
                     setLevelsDialogOpen(false);
-                    if (!apply && workImageData && originalImageData !== workImageData) {
-                        handleApplyLevels(workImageData);
-                    }
                 }}
-                originalImageData={originalImageData}
-                currentImageData={workImageData}
+                originalImageData={baseImageData}
+                currentImageData={baseImageData}
                 onApplyLevels={handleApplyLevels}
+            />
+
+            <ScaleModal
+                open={scaleModalOpen}
+                onClose={() => setScaleModalOpen(false)}
+                originalImageData={baseImageData}
+                onApplyScale={handleApplyScale}
+                currentScalePercent={100}
             />
         </Box>
     );
