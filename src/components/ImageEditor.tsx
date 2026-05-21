@@ -30,6 +30,7 @@ import {
     ColorLens as ColorLensIcon,
     Opacity as OpacityIcon,
     BarChart as LevelsIcon,
+    Gradient as KernelIcon,
 } from '@mui/icons-material';
 import LevelsDialog from './LevelsDialog';
 import ScaleModal from './ScaleModal';
@@ -37,6 +38,7 @@ import ScaleControl from './ScaleControl';
 import ImageCanvas, { ImageCanvasRef } from './ImageCanvas';
 import ImageInfo from './ImageInfo';
 import { convertToGrayscale, scaleImage } from '../utils/interpolation';
+import ConvolutionModal from './ConvolutionModal';
 
 interface ImageInfoData {
     width: number;
@@ -142,12 +144,13 @@ const ImageEditor: React.FC = () => {
     const [showMask, setShowMask] = useState<boolean>(false);
     const [displayMode, setDisplayMode] = useState<'normal' | 'grayscale' | 'grayscale-alpha' | 'rgb' | 'rgba'>('normal');
     const [levelsDialogOpen, setLevelsDialogOpen] = useState<boolean>(false);
-    
+
     const [baseImageData, setBaseImageData] = useState<ImageData | null>(null);
     const [originalLoadedImageData, setOriginalLoadedImageData] = useState<ImageData | null>(null);
     const [displayImageData, setDisplayImageData] = useState<ImageData | null>(null);
     const [displayScalePercent, setDisplayScalePercent] = useState<number>(100);
     const [displayScaleMethod, setDisplayScaleMethod] = useState<'bilinear' | 'nearest-neighbor'>('bilinear');
+    const [convolutionModalOpen, setConvolutionModalOpen] = useState<boolean>(false);
     const isFirstScaleRef = useRef<boolean>(true);
 
     const [channels, setChannels] = useState<ChannelState>({
@@ -184,9 +187,9 @@ const ImageEditor: React.FC = () => {
         const srcPixels = imageData.data;
         const result = new ImageData(width, height);
         const dstPixels = result.data;
-        
+
         let processedData: ImageData;
-        
+
         switch (mode) {
             case 'grayscale':
                 processedData = convertToGrayscale(imageData);
@@ -205,27 +208,27 @@ const ImageEditor: React.FC = () => {
                     tempPixels[idx + 3] = srcPixels[idx + 3];
                 }
         }
-        
+
         const processedPixels = processedData.data;
-        
+
         for (let i = 0; i < width * height; i++) {
             const idx = i * 4;
             let r = processedPixels[idx];
             let g = processedPixels[idx + 1];
             let b = processedPixels[idx + 2];
             let a = processedPixels[idx + 3];
-            
+
             if (!channelState.red) r = 0;
             if (!channelState.green) g = 0;
             if (!channelState.blue) b = 0;
             if (!channelState.alpha) a = 255;
-            
+
             dstPixels[idx] = r;
             dstPixels[idx + 1] = g;
             dstPixels[idx + 2] = b;
             dstPixels[idx + 3] = a;
         }
-        
+
         return result;
     }, []);
 
@@ -234,15 +237,15 @@ const ImageEditor: React.FC = () => {
             setDisplayImageData(null);
             return;
         }
-        
+
         let mode: 'normal' | 'grayscale' | 'grayscale-alpha' | 'rgb' | 'rgba' = 'normal';
         if (displayMode === 'grayscale') mode = 'grayscale';
         else if (displayMode === 'grayscale-alpha') mode = 'grayscale-alpha';
         else if (displayMode === 'rgb') mode = 'rgb';
         else if (displayMode === 'rgba') mode = 'rgba';
-        
+
         const filteredImageData = applyChannelsToImageData(baseImageData, channels, mode);
-        
+
         if (displayScalePercent !== 100) {
             const scaledWidth = Math.max(1, Math.round(baseImageData.width * (displayScalePercent / 100)));
             const scaledHeight = Math.max(1, Math.round(baseImageData.height * (displayScalePercent / 100)));
@@ -324,6 +327,20 @@ const ImageEditor: React.FC = () => {
         }
     }, []);
 
+    const handleApplyConvolution = useCallback((newImageData: ImageData) => {
+        setBaseImageData(newImageData);
+        generateChannelThumbnails(newImageData);
+        setDisplayScalePercent(100);
+
+        if (imageInfo) {
+            setImageInfo({
+                ...imageInfo,
+                width: newImageData.width,
+                height: newImageData.height,
+            });
+        }
+    }, [imageInfo, generateChannelThumbnails]);
+
     const handleApplyLevels = useCallback((newImageData: ImageData) => {
         setBaseImageData(newImageData);
         generateChannelThumbnails(newImageData);
@@ -333,7 +350,7 @@ const ImageEditor: React.FC = () => {
         setBaseImageData(scaledImageData);
         setDisplayScalePercent(100);
         generateChannelThumbnails(scaledImageData);
-        
+
         if (imageInfo) {
             setImageInfo({
                 ...imageInfo,
@@ -356,7 +373,7 @@ const ImageEditor: React.FC = () => {
         setOriginalLoadedImageData(imageData);
         setDisplayScalePercent(100);
         generateChannelThumbnails(imageData);
-        
+
         setImageInfo({
             ...fileInfo,
             width: imageData.width,
@@ -372,19 +389,19 @@ const ImageEditor: React.FC = () => {
             const scaleY = baseImageData.height / displayImageData.height;
             const origX = Math.floor(x * scaleX);
             const origY = Math.floor(y * scaleY);
-            
+
             if (origX >= 0 && origX < baseImageData.width && origY >= 0 && origY < baseImageData.height) {
                 const idx = (origY * baseImageData.width + origX) * 4;
                 const pixels = baseImageData.data;
                 const lab = rgbToLab(pixels[idx], pixels[idx + 1], pixels[idx + 2]);
-                setColorInfo({ 
-                    x: origX, 
-                    y: origY, 
-                    r: pixels[idx], 
-                    g: pixels[idx + 1], 
-                    b: pixels[idx + 2], 
-                    a: pixels[idx + 3], 
-                    lab 
+                setColorInfo({
+                    x: origX,
+                    y: origY,
+                    r: pixels[idx],
+                    g: pixels[idx + 1],
+                    b: pixels[idx + 2],
+                    a: pixels[idx + 3],
+                    lab
                 });
                 setColorDialogOpen(true);
             }
@@ -547,7 +564,7 @@ const ImageEditor: React.FC = () => {
                 if (ctx) {
                     ctx.drawImage(img, 0, 0);
                     const data = ctx.getImageData(0, 0, img.width, img.height);
-                    
+
                     setNewImageData(data, {
                         colorDepth: 24,
                         fileSize: file.size,
@@ -619,14 +636,14 @@ const ImageEditor: React.FC = () => {
 
     const handleDownload = (format: 'png' | 'jpg') => {
         if (!displayImageData) return;
-        
+
         const canvas = document.createElement('canvas');
         canvas.width = displayImageData.width;
         canvas.height = displayImageData.height;
         const ctx = canvas.getContext('2d');
         if (ctx) {
             ctx.putImageData(displayImageData, 0, 0);
-            
+
             try {
                 const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
                 const quality = format === 'jpg' ? 0.92 : undefined;
@@ -680,7 +697,7 @@ const ImageEditor: React.FC = () => {
                     onScaleChange={(newScale) => setDisplayScalePercent(newScale)}
                 />
             )}
-            
+
             <Grid container spacing={3}>
                 <Grid item xs={12} md={3}>
                     <Paper sx={{ p: 3 }}>
@@ -780,6 +797,19 @@ const ImageEditor: React.FC = () => {
                                 sx={{ mb: 2 }}
                             >
                                 Пипетка {eyedropperActive && "(активна)"}
+                            </Button>
+                        </Tooltip>
+                        <Tooltip title="Свертка изображения (Custom Filter)">
+                            <Button
+                                variant="outlined"
+                                color="primary"
+                                fullWidth
+                                startIcon={<KernelIcon />}
+                                onClick={() => setConvolutionModalOpen(true)}
+                                sx={{ mb: 2 }}
+                                disabled={!baseImageData}
+                            >
+                                Фильтр (Convolution)
                             </Button>
                         </Tooltip>
                         <Tooltip title="Коррекция уровней (Levels)">
@@ -959,7 +989,7 @@ const ImageEditor: React.FC = () => {
             )}
 
             {imageInfo && <Box sx={{ mb: 8 }} />}
-            
+
             <LevelsDialog
                 open={levelsDialogOpen}
                 onClose={(apply) => {
@@ -977,6 +1007,13 @@ const ImageEditor: React.FC = () => {
                 onApplyScale={handleApplyScale}
                 currentScalePercent={100}
             />
+            <ConvolutionModal
+                open={convolutionModalOpen}
+                onClose={() => setConvolutionModalOpen(false)}
+                originalImageData={baseImageData}
+                onApply={handleApplyConvolution}
+            />
+
         </Box>
     );
 };
