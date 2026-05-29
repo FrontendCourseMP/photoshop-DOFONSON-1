@@ -331,12 +331,14 @@ const ImageEditor: React.FC = () => {
         setBaseImageData(newImageData);
         generateChannelThumbnails(newImageData);
         setDisplayScalePercent(100);
-
+    
         if (imageInfo) {
+            const newColorDepth = getColorDepthFromImageData(newImageData);
             setImageInfo({
                 ...imageInfo,
                 width: newImageData.width,
                 height: newImageData.height,
+                colorDepth: newColorDepth, 
             });
         }
     }, [imageInfo, generateChannelThumbnails]);
@@ -344,18 +346,30 @@ const ImageEditor: React.FC = () => {
     const handleApplyLevels = useCallback((newImageData: ImageData) => {
         setBaseImageData(newImageData);
         generateChannelThumbnails(newImageData);
-    }, [generateChannelThumbnails]);
+        
+        if (imageInfo) {
+            const newColorDepth = getColorDepthFromImageData(newImageData);
+            setImageInfo(prev => prev ? {
+                ...prev,
+                width: newImageData.width,
+                height: newImageData.height,
+                colorDepth: newColorDepth,
+            } : null);
+        }
+    }, [imageInfo, generateChannelThumbnails]);
 
     const handleApplyScale = useCallback((scaledImageData: ImageData, newScalePercent: number) => {
         setBaseImageData(scaledImageData);
         setDisplayScalePercent(100);
         generateChannelThumbnails(scaledImageData);
-
+    
         if (imageInfo) {
+            const newColorDepth = getColorDepthFromImageData(scaledImageData);
             setImageInfo({
                 ...imageInfo,
                 width: scaledImageData.width,
                 height: scaledImageData.height,
+                colorDepth: newColorDepth,
             });
         }
     }, [imageInfo, generateChannelThumbnails]);
@@ -368,18 +382,35 @@ const ImageEditor: React.FC = () => {
         updateDisplayImage();
     }, [updateDisplayImage]);
 
-    const setNewImageData = useCallback((imageData: ImageData, fileInfo: Omit<ImageInfoData, 'width' | 'height'>) => {
+    const setNewImageData = useCallback((imageData: ImageData, fileInfo: Omit<ImageInfoData, 'width' | 'height' | 'colorDepth'> & { colorDepth?: number }) => {
         setBaseImageData(imageData);
         setOriginalLoadedImageData(imageData);
         setDisplayScalePercent(100);
         generateChannelThumbnails(imageData);
-
+    
+        const colorDepth = fileInfo.colorDepth ?? getColorDepthFromImageData(imageData);
+        
         setImageInfo({
             ...fileInfo,
             width: imageData.width,
             height: imageData.height,
+            colorDepth: colorDepth,
         });
     }, [generateChannelThumbnails]);
+
+    const getColorDepthFromImageData = (imageData: ImageData): number => {
+        const data = imageData.data;
+        let hasAlpha = false;
+        
+        for (let i = 3; i < data.length; i += 4) {
+            if (data[i] < 255) {
+                hasAlpha = true;
+                break;
+            }
+        }
+        
+        return hasAlpha ? 32 : 24;
+    };
 
     const handleCanvasClick = useCallback((_event: React.MouseEvent<HTMLCanvasElement>, x: number, y: number, color: { r: number; g: number; b: number; a: number }) => {
         if (!eyedropperActive || !displayImageData) return;

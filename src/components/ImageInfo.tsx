@@ -34,7 +34,7 @@ const ImageInfo: React.FC<ImageInfoProps> = ({
     visibleChannels,
 }) => {
     const megapixels = (width * height / 1000000).toFixed(2);
-    
+
     return (
         <Paper
             sx={{
@@ -58,7 +58,7 @@ const ImageInfo: React.FC<ImageInfoProps> = ({
                         </Typography>
                     </Stack>
                 </Grid>
-                
+
                 <Grid item xs={6} sm={3} md={2}>
                     <Stack direction="row" spacing={1} alignItems="center">
                         <MemoryIcon fontSize="small" />
@@ -67,7 +67,7 @@ const ImageInfo: React.FC<ImageInfoProps> = ({
                         </Typography>
                     </Stack>
                 </Grid>
-                
+
                 <Grid item xs={6} sm={3} md={2}>
                     <Stack direction="row" spacing={1} alignItems="center">
                         <SizeIcon fontSize="small" />
@@ -76,7 +76,7 @@ const ImageInfo: React.FC<ImageInfoProps> = ({
                         </Typography>
                     </Stack>
                 </Grid>
-                
+
                 <Grid item xs={6} sm={3} md={2}>
                     <Stack direction="row" spacing={1} alignItems="center">
                         <ImageIcon fontSize="small" />
@@ -85,18 +85,32 @@ const ImageInfo: React.FC<ImageInfoProps> = ({
                         </Typography>
                     </Stack>
                 </Grid>
-                
+
                 <Grid item xs={6} sm={3} md={3}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                        <ColorIcon fontSize="small" />
+                        <Typography variant="body2">
+                            <strong>Глубина цвета:</strong>{' '}
+                            {colorDepth === 32 && '32-bit (RGBA)'}
+                            {colorDepth === 24 && '24-bit (RGB)'}
+                            {colorDepth === 8 && '8-bit (Grayscale + Mask)'}
+                            {colorDepth === 7 && '7-bit (Grayscale)'}
+                            {(!colorDepth || colorDepth === 0) && 'Неизвестно'}
+                        </Typography>
+                    </Stack>
+                </Grid>
+
+                <Grid item xs={12} sm={3} md={3}>
                     <Stack direction="row" spacing={1} alignItems="center">
                         <ColorIcon fontSize="small" />
                         <Typography variant="body2">
                             <strong>Каналы:</strong>{' '}
                             {visibleChannels ? (
                                 <>
-                                    {visibleChannels.red && <Chip label="R" size="small" sx={{ height: 20, mr: 0.5 }} />}
-                                    {visibleChannels.green && <Chip label="G" size="small" sx={{ height: 20, mr: 0.5 }} />}
-                                    {visibleChannels.blue && <Chip label="B" size="small" sx={{ height: 20, mr: 0.5 }} />}
-                                    {visibleChannels.alpha && <Chip label="A" size="small" sx={{ height: 20 }} />}
+                                    {visibleChannels.red && <Chip label="R" size="small" sx={{ height: 20, mr: 0.5, bgcolor: '#f44336', color: 'white' }} />}
+                                    {visibleChannels.green && <Chip label="G" size="small" sx={{ height: 20, mr: 0.5, bgcolor: '#4caf50', color: 'white' }} />}
+                                    {visibleChannels.blue && <Chip label="B" size="small" sx={{ height: 20, mr: 0.5, bgcolor: '#2196f3', color: 'white' }} />}
+                                    {visibleChannels.alpha && <Chip label="A" size="small" sx={{ height: 20, bgcolor: '#9c27b0', color: 'white' }} />}
                                 </>
                             ) : (
                                 `${colorDepth}-bit`
