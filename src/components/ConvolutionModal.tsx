@@ -31,7 +31,7 @@ import {
     Info as InfoIcon,
     Gradient as KernelIcon,
 } from '@mui/icons-material';
-import { Kernel, predefinedKernels, EdgeHandlingStrategy, applyConvolutionAsync, kernelToFlatArray, flatArrayToKernel } from '../utils/convolution';
+import { Kernel, predefinedKernels, EdgeHandlingStrategy, applyConvolutionAsync, kernelToFlatArray } from '../utils/convolution';
 
 interface ConvolutionModalProps {
     open: boolean;
@@ -84,6 +84,15 @@ const ConvolutionModal: React.FC<ConvolutionModalProps> = ({
             setOffset(preset.offset ?? 0);
         }
     }, []);
+    
+    useEffect(() => {
+        if (open) {
+            loadPreset('identity');
+            setSelectedPreset('identity');
+            setEdgeStrategy('clamp');
+            setApplyToChannels({ red: true, green: true, blue: true, alpha: false });
+        }
+    }, [open, loadPreset]);
     
     const handlePresetChange = (presetKey: string) => {
         setSelectedPreset(presetKey);
@@ -274,24 +283,27 @@ const ConvolutionModal: React.FC<ConvolutionModalProps> = ({
                                 <Typography variant="subtitle2" gutterBottom>
                                     Ядро свертки (3x3)
                                 </Typography>
-                                <Box sx={{ display: 'inline-block', mx: 'auto' }}>
-                                    <Grid container spacing={1} sx={{ width: 'auto' }}>
-                                        {kernelValues.map((value, index) => (
-                                            <Grid item key={index}>
-                                                <TextField
-                                                    type="number"
-                                                    value={value}
-                                                    onChange={(e) => handleKernelValueChange(index, e.target.value)}
-                                                    size="small"
-                                                    inputProps={{ 
-                                                        step: 1,
-                                                        style: { textAlign: 'center', width: 60 }
-                                                    }}
-                                                    variant="outlined"
-                                                />
-                                            </Grid>
-                                        ))}
-                                    </Grid>
+                                <Box sx={{ 
+                                    display: 'grid', 
+                                    gridTemplateColumns: 'repeat(3, 1fr)', 
+                                    gap: 1, 
+                                    width: 'fit-content', 
+                                    mx: 'auto' 
+                                }}>
+                                    {kernelValues.map((value, index) => (
+                                        <TextField
+                                            key={index}
+                                            type="number"
+                                            value={value}
+                                            onChange={(e) => handleKernelValueChange(index, e.target.value)}
+                                            size="small"
+                                            inputProps={{ 
+                                                step: 1,
+                                                style: { textAlign: 'center', width: 60 }
+                                            }}
+                                            variant="outlined"
+                                        />
+                                    ))}
                                 </Box>
                                 
                                 <Divider sx={{ my: 2 }} />

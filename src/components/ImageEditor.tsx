@@ -6,25 +6,15 @@ import {
     Box,
     Grid,
     Alert,
-    CircularProgress,
     Divider,
     Chip,
     Stack,
     Tooltip,
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    Table,
-    TableBody,
-    TableRow,
-    TableCell,
     styled,
 } from '@mui/material';
 import {
     Upload as UploadIcon,
     Download as DownloadIcon,
-    Image as ImageIcon,
-    Info as InfoIcon,
     Delete as DeleteIcon,
     Save as SaveIcon,
     ColorLens as ColorLensIcon,
@@ -127,8 +117,8 @@ const ThumbnailContainer = styled(Box)(({ theme }) => ({
 }));
 
 const ChannelCanvas = styled('canvas')({
-    width: '80px',
-    height: '80px',
+    width: '60px',
+    height: '60px',
     display: 'block',
     margin: '0 auto',
     borderRadius: '4px',
@@ -141,17 +131,16 @@ const ImageEditor: React.FC = () => {
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [grayBitData, setGrayBitData] = useState<Uint8Array | null>(null);
-    const [showMask, setShowMask] = useState<boolean>(false);
     const [displayMode, setDisplayMode] = useState<'normal' | 'grayscale' | 'grayscale-alpha' | 'rgb' | 'rgba'>('normal');
     const [levelsDialogOpen, setLevelsDialogOpen] = useState<boolean>(false);
 
     const [baseImageData, setBaseImageData] = useState<ImageData | null>(null);
+    const [filteredImageData, setFilteredImageData] = useState<ImageData | null>(null);
     const [originalLoadedImageData, setOriginalLoadedImageData] = useState<ImageData | null>(null);
     const [displayImageData, setDisplayImageData] = useState<ImageData | null>(null);
     const [displayScalePercent, setDisplayScalePercent] = useState<number>(100);
-    const [displayScaleMethod, setDisplayScaleMethod] = useState<'bilinear' | 'nearest-neighbor'>('bilinear');
+    const [displayScaleMethod] = useState<'bilinear' | 'nearest-neighbor'>('bilinear');
     const [convolutionModalOpen, setConvolutionModalOpen] = useState<boolean>(false);
-    const isFirstScaleRef = useRef<boolean>(true);
 
     const [channels, setChannels] = useState<ChannelState>({
         red: true,
@@ -164,6 +153,8 @@ const ImageEditor: React.FC = () => {
     const [colorInfo, setColorInfo] = useState<ColorInfo | null>(null);
     const [colorDialogOpen, setColorDialogOpen] = useState<boolean>(false);
     const [scaleModalOpen, setScaleModalOpen] = useState<boolean>(false);
+
+    const [isGrayBit, setIsGrayBit] = useState<boolean>(false);
 
     const [channelThumbnails, setChannelThumbnails] = useState<{
         grayscale: string | null;
@@ -180,6 +171,7 @@ const ImageEditor: React.FC = () => {
     const canvasRef = useRef<ImageCanvasRef>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const canvasContainerRef = useRef<HTMLDivElement>(null);
 
     const applyChannelsToImageData = useCallback((imageData: ImageData, channelState: ChannelState, mode: 'normal' | 'grayscale' | 'grayscale-alpha' | 'rgb' | 'rgba' = 'normal'): ImageData => {
         const width = imageData.width;
@@ -232,9 +224,9 @@ const ImageEditor: React.FC = () => {
         return result;
     }, []);
 
-    const updateDisplayImage = useCallback(() => {
+    useEffect(() => {
         if (!baseImageData) {
-            setDisplayImageData(null);
+            setFilteredImageData(null);
             return;
         }
 
@@ -244,17 +236,29 @@ const ImageEditor: React.FC = () => {
         else if (displayMode === 'rgb') mode = 'rgb';
         else if (displayMode === 'rgba') mode = 'rgba';
 
-        const filteredImageData = applyChannelsToImageData(baseImageData, channels, mode);
+        const filtered = applyChannelsToImageData(baseImageData, channels, mode);
+        setFilteredImageData(filtered);
+    }, [baseImageData, channels, displayMode, applyChannelsToImageData]);
 
-        if (displayScalePercent !== 100) {
-            const scaledWidth = Math.max(1, Math.round(baseImageData.width * (displayScalePercent / 100)));
-            const scaledHeight = Math.max(1, Math.round(baseImageData.height * (displayScalePercent / 100)));
-            const scaledImageData = scaleImage(filteredImageData, scaledWidth, scaledHeight, displayScaleMethod);
-            setDisplayImageData(scaledImageData);
-        } else {
-            setDisplayImageData(filteredImageData);
-        }
-    }, [baseImageData, channels, displayScalePercent, displayScaleMethod, displayMode, applyChannelsToImageData]);
+    const fitImageToContainer = useCallback(() => {
+        if (!baseImageData || !canvasContainerRef.current) return;
+        const container = canvasContainerRef.current;
+        const containerWidth = container.clientWidth - 32;
+        const containerHeight = container.clientHeight - 32;
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+        const scaleX = (containerWidth / baseImageData.width) * 100;
+        const scaleY = (containerHeight / baseImageData.height) * 100;
+        const fitScale = Math.min(scaleX, scaleY, 100);
+        setDisplayScalePercent(fitScale);
+    }, [baseImageData]);
+
+    const handleScaleChange = useCallback((newScale: number) => {
+        setDisplayScalePercent(newScale);
+    }, []);
+
+    const handleScaledImageChange = useCallback((scaledImageData: ImageData, _scalePercent: number) => {
+        setDisplayImageData(scaledImageData);
+    }, []);
 
     const generateChannelThumbnails = useCallback((imageData: ImageData) => {
         const width = imageData.width;
@@ -327,18 +331,42 @@ const ImageEditor: React.FC = () => {
         }
     }, []);
 
+    const getColorDepthFromImageData = (imageData: ImageData): number => {
+        const data = imageData.data;
+        let hasAlpha = false;
+        for (let i = 3; i < data.length; i += 4) {
+            if (data[i] < 255) {
+                hasAlpha = true;
+                break;
+            }
+        }
+        return hasAlpha ? 32 : 24;
+    };
+
+    const setNewImageData = useCallback((imageData: ImageData, fileInfo: Omit<ImageInfoData, 'width' | 'height' | 'colorDepth'> & { colorDepth?: number }) => {
+        setBaseImageData(imageData);
+        setOriginalLoadedImageData(imageData);
+        generateChannelThumbnails(imageData);
+        const colorDepth = fileInfo.colorDepth ?? getColorDepthFromImageData(imageData);
+        setImageInfo({
+            ...fileInfo,
+            width: imageData.width,
+            height: imageData.height,
+            colorDepth: colorDepth,
+        });
+    }, [generateChannelThumbnails]);
+
     const handleApplyConvolution = useCallback((newImageData: ImageData) => {
         setBaseImageData(newImageData);
         generateChannelThumbnails(newImageData);
-        setDisplayScalePercent(100);
-    
+        setIsGrayBit(false);
         if (imageInfo) {
             const newColorDepth = getColorDepthFromImageData(newImageData);
             setImageInfo({
                 ...imageInfo,
                 width: newImageData.width,
                 height: newImageData.height,
-                colorDepth: newColorDepth, 
+                colorDepth: newColorDepth,
             });
         }
     }, [imageInfo, generateChannelThumbnails]);
@@ -346,7 +374,7 @@ const ImageEditor: React.FC = () => {
     const handleApplyLevels = useCallback((newImageData: ImageData) => {
         setBaseImageData(newImageData);
         generateChannelThumbnails(newImageData);
-        
+        setIsGrayBit(false);
         if (imageInfo) {
             const newColorDepth = getColorDepthFromImageData(newImageData);
             setImageInfo(prev => prev ? {
@@ -360,9 +388,8 @@ const ImageEditor: React.FC = () => {
 
     const handleApplyScale = useCallback((scaledImageData: ImageData, newScalePercent: number) => {
         setBaseImageData(scaledImageData);
-        setDisplayScalePercent(100);
         generateChannelThumbnails(scaledImageData);
-    
+        setIsGrayBit(false);
         if (imageInfo) {
             const newColorDepth = getColorDepthFromImageData(scaledImageData);
             setImageInfo({
@@ -372,55 +399,16 @@ const ImageEditor: React.FC = () => {
                 colorDepth: newColorDepth,
             });
         }
-    }, [imageInfo, generateChannelThumbnails]);
-
-    const handleScaleForDisplay = useCallback((_scaledImageData: ImageData, scalePercent: number) => {
-        setDisplayScalePercent(scalePercent);
-    }, []);
-
-    useEffect(() => {
-        updateDisplayImage();
-    }, [updateDisplayImage]);
-
-    const setNewImageData = useCallback((imageData: ImageData, fileInfo: Omit<ImageInfoData, 'width' | 'height' | 'colorDepth'> & { colorDepth?: number }) => {
-        setBaseImageData(imageData);
-        setOriginalLoadedImageData(imageData);
         setDisplayScalePercent(100);
-        generateChannelThumbnails(imageData);
-    
-        const colorDepth = fileInfo.colorDepth ?? getColorDepthFromImageData(imageData);
-        
-        setImageInfo({
-            ...fileInfo,
-            width: imageData.width,
-            height: imageData.height,
-            colorDepth: colorDepth,
-        });
-    }, [generateChannelThumbnails]);
-
-    const getColorDepthFromImageData = (imageData: ImageData): number => {
-        const data = imageData.data;
-        let hasAlpha = false;
-        
-        for (let i = 3; i < data.length; i += 4) {
-            if (data[i] < 255) {
-                hasAlpha = true;
-                break;
-            }
-        }
-        
-        return hasAlpha ? 32 : 24;
-    };
+    }, [imageInfo, generateChannelThumbnails]);
 
     const handleCanvasClick = useCallback((_event: React.MouseEvent<HTMLCanvasElement>, x: number, y: number, color: { r: number; g: number; b: number; a: number }) => {
         if (!eyedropperActive || !displayImageData) return;
-
         if (baseImageData) {
             const scaleX = baseImageData.width / displayImageData.width;
             const scaleY = baseImageData.height / displayImageData.height;
             const origX = Math.floor(x * scaleX);
             const origY = Math.floor(y * scaleY);
-
             if (origX >= 0 && origX < baseImageData.width && origY >= 0 && origY < baseImageData.height) {
                 const idx = (origY * baseImageData.width + origX) * 4;
                 const pixels = baseImageData.data;
@@ -441,49 +429,39 @@ const ImageEditor: React.FC = () => {
 
     const readGrayBitFile = async (arrayBuffer: ArrayBuffer): Promise<{ imageData: ImageData; header: GrayBitHeader }> => {
         const data = new Uint8Array(arrayBuffer);
-
         const signature = data.slice(0, 4);
         const expectedSignature = new Uint8Array([0x47, 0x42, 0x37, 0x1D]);
-
         for (let i = 0; i < 4; i++) {
             if (signature[i] !== expectedSignature[i]) {
                 throw new Error('Неверный формат GrayBit-7 файла');
             }
         }
-
         const version = data[4];
         const flags = data[5];
         const width = (data[6] << 8) | data[7];
         const height = (data[8] << 8) | data[9];
         const reserved = (data[10] << 8) | data[11];
         const hasMask = (flags & 0x01) === 1;
-
         if (version !== 0x01) {
             throw new Error(`Неподдерживаемая версия GrayBit: ${version}`);
         }
-
         const pixelData = data.slice(12);
         const expectedSize = width * height;
-
         if (pixelData.length < expectedSize) {
             throw new Error('Недостаточно данных в файле');
         }
-
         const imageData = new ImageData(width, height);
-
         for (let i = 0; i < expectedSize; i++) {
             const pixel = pixelData[i];
             const grayValue = pixel & 0x7F;
             const maskBit = (pixel >> 7) & 0x01;
             const rgbValue = Math.round((grayValue / 127) * 255);
             const alpha = (hasMask && maskBit === 0) ? 0 : 255;
-
             imageData.data[i * 4] = rgbValue;
             imageData.data[i * 4 + 1] = rgbValue;
             imageData.data[i * 4 + 2] = rgbValue;
             imageData.data[i * 4 + 3] = alpha;
         }
-
         return {
             imageData,
             header: {
@@ -503,20 +481,16 @@ const ImageEditor: React.FC = () => {
         const height = imageData.height;
         const pixels = imageData.data;
         const grayBitBuffer = new Uint8Array(width * height);
-
         for (let i = 0; i < width * height; i++) {
             const r = pixels[i * 4];
             const g = pixels[i * 4 + 1];
             const b = pixels[i * 4 + 2];
             const a = pixels[i * 4 + 3];
-
             const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
             const gray7Bit = Math.round((gray / 255) * 127);
             const maskBit = includeMask ? (a > 128 ? 1 : 0) : 0;
-
             grayBitBuffer[i] = (maskBit << 7) | (gray7Bit & 0x7F);
         }
-
         return grayBitBuffer;
     };
 
@@ -524,7 +498,6 @@ const ImageEditor: React.FC = () => {
         const width = imageData.width;
         const height = imageData.height;
         const grayBitData = convertToGrayBit(imageData, includeMask);
-
         const header = new Uint8Array(12);
         header[0] = 0x47; header[1] = 0x42; header[2] = 0x37; header[3] = 0x1D;
         header[4] = 0x01;
@@ -535,11 +508,9 @@ const ImageEditor: React.FC = () => {
         header[9] = height & 0xFF;
         header[10] = 0x00;
         header[11] = 0x00;
-
         const result = new Uint8Array(header.length + grayBitData.length);
         result.set(header);
         result.set(grayBitData, header.length);
-
         return result;
     };
 
@@ -547,7 +518,6 @@ const ImageEditor: React.FC = () => {
         try {
             const arrayBuffer = await file.arrayBuffer();
             const { imageData, header } = await readGrayBitFile(arrayBuffer);
-
             setNewImageData(imageData, {
                 colorDepth: header.hasMask ? 8 : 7,
                 fileSize: file.size,
@@ -555,11 +525,15 @@ const ImageEditor: React.FC = () => {
                 fileType: 'image/graybit-7',
                 hasMask: header.hasMask,
             });
-
             setSelectedImage(URL.createObjectURL(file));
             setGrayBitData(new Uint8Array(arrayBuffer));
+            setIsGrayBit(true);
+            if (header.hasMask) {
+                setGrayscaleAlphaMode();
+            } else {
+                setGrayscaleMode();
+            }
             setLoading(false);
-
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Ошибка при загрузке GrayBit-7 файла');
             setLoading(false);
@@ -569,21 +543,18 @@ const ImageEditor: React.FC = () => {
     const handleImageUpload = (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
-
         if (file.name.endsWith('.gb7') || file.name.endsWith('.graybit')) {
             setLoading(true);
             handleGrayBitUpload(file);
             return;
         }
-
         if (!file.type.match(/image\/(png|jpeg|jpg)/)) {
             setError('Пожалуйста, загрузите файл в формате PNG, JPG/JPEG или GrayBit-7 (.gb7)');
             return;
         }
-
         setLoading(true);
         setError(null);
-
+        setIsGrayBit(false);
         const reader = new FileReader();
         reader.onload = (e) => {
             const img = new Image();
@@ -595,7 +566,6 @@ const ImageEditor: React.FC = () => {
                 if (ctx) {
                     ctx.drawImage(img, 0, 0);
                     const data = ctx.getImageData(0, 0, img.width, img.height);
-
                     setNewImageData(data, {
                         colorDepth: 24,
                         fileSize: file.size,
@@ -603,7 +573,6 @@ const ImageEditor: React.FC = () => {
                         fileType: file.type,
                         hasMask: false,
                     });
-
                     setSelectedImage(e.target?.result as string);
                     setGrayBitData(null);
                 }
@@ -649,7 +618,6 @@ const ImageEditor: React.FC = () => {
 
     const handleDownloadGrayBit = (includeMask: boolean = false) => {
         if (!baseImageData) return;
-
         try {
             const grayBitFile = createGrayBitFile(baseImageData, includeMask);
             const blob = new Blob([grayBitFile], { type: 'application/octet-stream' });
@@ -667,14 +635,12 @@ const ImageEditor: React.FC = () => {
 
     const handleDownload = (format: 'png' | 'jpg') => {
         if (!displayImageData) return;
-
         const canvas = document.createElement('canvas');
         canvas.width = displayImageData.width;
         canvas.height = displayImageData.height;
         const ctx = canvas.getContext('2d');
         if (ctx) {
             ctx.putImageData(displayImageData, 0, 0);
-
             try {
                 const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
                 const quality = format === 'jpg' ? 0.92 : undefined;
@@ -697,6 +663,7 @@ const ImageEditor: React.FC = () => {
         setGrayBitData(null);
         setBaseImageData(null);
         setOriginalLoadedImageData(null);
+        setFilteredImageData(null);
         setDisplayImageData(null);
         setDisplayScalePercent(100);
         setEyedropperActive(false);
@@ -704,7 +671,7 @@ const ImageEditor: React.FC = () => {
         setChannelThumbnails({ grayscale: null, grayscaleAlpha: null, rgb: null, rgba: null });
         setChannels({ red: true, green: true, blue: true, alpha: true });
         setDisplayMode('normal');
-
+        setIsGrayBit(false);
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
@@ -718,14 +685,14 @@ const ImageEditor: React.FC = () => {
 
     return (
         <Box ref={containerRef}>
-            {baseImageData && (
+            {filteredImageData && (
                 <ScaleControl
-                    originalImageData={baseImageData}
-                    onScaledImageChange={handleScaleForDisplay}
-                    containerRef={containerRef}
+                    originalImageData={filteredImageData}
+                    scale={displayScalePercent}
+                    onScaleChange={handleScaleChange}
+                    onScaledImageChange={handleScaledImageChange}
+                    onFitToScreen={fitImageToContainer}
                     onOpenScaleModal={() => setScaleModalOpen(true)}
-                    externalScale={displayScalePercent}
-                    onScaleChange={(newScale) => setDisplayScalePercent(newScale)}
                 />
             )}
 
@@ -735,7 +702,6 @@ const ImageEditor: React.FC = () => {
                         <Typography variant="h6" gutterBottom>
                             Управление
                         </Typography>
-
                         <Box sx={{ mb: 3 }}>
                             <input
                                 type="file"
@@ -886,15 +852,15 @@ const ImageEditor: React.FC = () => {
                         <Typography variant="h6" gutterBottom>
                             Просмотр изображения
                         </Typography>
-
-                        <ImageCanvas
-                            ref={canvasRef}
-                            imageData={displayImageData}
-                            isLoading={loading}
-                            onClick={handleCanvasClick}
-                            cursor={eyedropperActive ? 'crosshair' : 'default'}
-                        />
-
+                        <div ref={canvasContainerRef} style={{ width: '100%', minHeight: 400 }}>
+                            <ImageCanvas
+                                ref={canvasRef}
+                                imageData={displayImageData}
+                                isLoading={loading}
+                                onClick={handleCanvasClick}
+                                cursor={eyedropperActive ? 'crosshair' : 'default'}
+                            />
+                        </div>
                         {colorInfo && (
                             <Alert severity="info" sx={{ mt: 2 }} onClose={() => setColorInfo(null)}>
                                 <Typography variant="body2">
@@ -909,83 +875,110 @@ const ImageEditor: React.FC = () => {
                 </Grid>
 
                 <Grid item xs={12} md={3}>
-                    <Paper sx={{ p: 3 }}>
+                    <Paper sx={{ p: 2 }}>
                         <Typography variant="h6" gutterBottom>
                             Цветовые каналы
                         </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                            Кликните на миниатюру, чтобы применить пресет каналов
-                        </Typography>
-
-                        <ThumbnailContainer onClick={setGrayscaleMode}>
-                            <Typography variant="caption" gutterBottom display="block" align="center">
-                                1. Grayscale (только яркость)
-                            </Typography>
-                            {channelThumbnails.grayscale ? (
-                                <img src={channelThumbnails.grayscale} alt="Grayscale" style={{ width: '80px', height: '80px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+                            {isGrayBit ? (
+                                <>
+                                    <ThumbnailContainer onClick={setGrayscaleMode} sx={{ flex: 1, minWidth: 70, textAlign: 'center' }}>
+                                        <Typography variant="caption" display="block" sx={{ fontSize: '0.7rem' }}>
+                                            1. Grayscale
+                                        </Typography>
+                                        {channelThumbnails.grayscale ? (
+                                            <img src={channelThumbnails.grayscale} alt="Grayscale" style={{ width: '60px', height: '60px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
+                                        ) : (
+                                            <ChannelCanvas width={60} height={60} />
+                                        )}
+                                    </ThumbnailContainer>
+                                    <ThumbnailContainer onClick={setGrayscaleAlphaMode} sx={{ flex: 1, minWidth: 70, textAlign: 'center' }}>
+                                        <Typography variant="caption" display="block" sx={{ fontSize: '0.7rem' }}>
+                                            2. G+Alpha
+                                        </Typography>
+                                        {channelThumbnails.grayscaleAlpha ? (
+                                            <img src={channelThumbnails.grayscaleAlpha} alt="Grayscale+Alpha" style={{ width: '60px', height: '60px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
+                                        ) : (
+                                            <ChannelCanvas width={60} height={60} />
+                                        )}
+                                    </ThumbnailContainer>
+                                </>
                             ) : (
-                                <ChannelCanvas width={80} height={80} />
+                                <>
+                                    <ThumbnailContainer onClick={setGrayscaleMode} sx={{ flex: 1, minWidth: 70, textAlign: 'center' }}>
+                                        <Typography variant="caption" display="block" sx={{ fontSize: '0.7rem' }}>
+                                            1. Grayscale
+                                        </Typography>
+                                        {channelThumbnails.grayscale ? (
+                                            <img src={channelThumbnails.grayscale} alt="Grayscale" style={{ width: '60px', height: '60px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
+                                        ) : (
+                                            <ChannelCanvas width={60} height={60} />
+                                        )}
+                                    </ThumbnailContainer>
+                                    <ThumbnailContainer onClick={setGrayscaleAlphaMode} sx={{ flex: 1, minWidth: 70, textAlign: 'center' }}>
+                                        <Typography variant="caption" display="block" sx={{ fontSize: '0.7rem' }}>
+                                            2. G+Alpha
+                                        </Typography>
+                                        {channelThumbnails.grayscaleAlpha ? (
+                                            <img src={channelThumbnails.grayscaleAlpha} alt="Grayscale+Alpha" style={{ width: '60px', height: '60px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
+                                        ) : (
+                                            <ChannelCanvas width={60} height={60} />
+                                        )}
+                                    </ThumbnailContainer>
+                                    <ThumbnailContainer onClick={setRGBMode} sx={{ flex: 1, minWidth: 70, textAlign: 'center' }}>
+                                        <Typography variant="caption" display="block" sx={{ fontSize: '0.7rem' }}>
+                                            3. <br /> RGB
+                                        </Typography>
+                                        {channelThumbnails.rgb ? (
+                                            <img src={channelThumbnails.rgb} alt="RGB" style={{ width: '60px', height: '60px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
+                                        ) : (
+                                            <ChannelCanvas width={60} height={60} />
+                                        )}
+                                    </ThumbnailContainer>
+                                    <ThumbnailContainer onClick={setRGBAMode} sx={{ flex: 1, minWidth: 70, textAlign: 'center' }}>
+                                        <Typography variant="caption" display="block" sx={{ fontSize: '0.7rem' }}>
+                                            4. <br /> RGBA
+                                        </Typography>
+                                        {channelThumbnails.rgba ? (
+                                            <img src={channelThumbnails.rgba} alt="RGBA" style={{ width: '60px', height: '60px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
+                                        ) : (
+                                            <ChannelCanvas width={60} height={60} />
+                                        )}
+                                    </ThumbnailContainer>
+                                </>
                             )}
-                        </ThumbnailContainer>
+                        </Box>
 
-                        <ThumbnailContainer onClick={setGrayscaleAlphaMode}>
-                            <Typography variant="caption" gutterBottom display="block" align="center">
-                                2. Grayscale + Alpha (с прозрачностью)
-                            </Typography>
-                            {channelThumbnails.grayscaleAlpha ? (
-                                <img src={channelThumbnails.grayscaleAlpha} alt="Grayscale + Alpha" style={{ width: '80px', height: '80px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
-                            ) : (
-                                <ChannelCanvas width={80} height={80} />
-                            )}
-                        </ThumbnailContainer>
-
-                        <ThumbnailContainer onClick={setRGBMode}>
-                            <Typography variant="caption" gutterBottom display="block" align="center">
-                                3. RGB (без альфа-канала)
-                            </Typography>
-                            {channelThumbnails.rgb ? (
-                                <img src={channelThumbnails.rgb} alt="RGB" style={{ width: '80px', height: '80px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
-                            ) : (
-                                <ChannelCanvas width={80} height={80} />
-                            )}
-                        </ThumbnailContainer>
-
-                        <ThumbnailContainer onClick={setRGBAMode}>
-                            <Typography variant="caption" gutterBottom display="block" align="center">
-                                4. RGBA (все каналы)
-                            </Typography>
-                            {channelThumbnails.rgba ? (
-                                <img src={channelThumbnails.rgba} alt="RGBA" style={{ width: '80px', height: '80px', margin: '0 auto', display: 'block', borderRadius: '4px' }} />
-                            ) : (
-                                <ChannelCanvas width={80} height={80} />
-                            )}
-                        </ThumbnailContainer>
-
-                        <Divider sx={{ my: 2 }} />
+                        <Divider sx={{ my: 1 }} />
 
                         <Typography variant="subtitle2" gutterBottom>
                             Отдельные каналы (чекбоксы):
                         </Typography>
 
+                        {!isGrayBit && (
+                            <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
+                                <Chip
+                                    label="R (Красный)"
+                                    onClick={() => setChannels(prev => ({ ...prev, red: !prev.red }))}
+                                    color={channels.red ? "error" : "default"}
+                                    variant={channels.red ? "filled" : "outlined"}
+                                />
+                                <Chip
+                                    label="G (Зеленый)"
+                                    onClick={() => setChannels(prev => ({ ...prev, green: !prev.green }))}
+                                    color={channels.green ? "success" : "default"}
+                                    variant={channels.green ? "filled" : "outlined"}
+                                />
+                                <Chip
+                                    label="B (Синий)"
+                                    onClick={() => setChannels(prev => ({ ...prev, blue: !prev.blue }))}
+                                    color={channels.blue ? "primary" : "default"}
+                                    variant={channels.blue ? "filled" : "outlined"}
+                                />
+                            </Stack>
+                        )}
+
                         <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
-                            <Chip
-                                label="R (Красный)"
-                                onClick={() => setChannels(prev => ({ ...prev, red: !prev.red }))}
-                                color={channels.red ? "error" : "default"}
-                                variant={channels.red ? "filled" : "outlined"}
-                            />
-                            <Chip
-                                label="G (Зеленый)"
-                                onClick={() => setChannels(prev => ({ ...prev, green: !prev.green }))}
-                                color={channels.green ? "success" : "default"}
-                                variant={channels.green ? "filled" : "outlined"}
-                            />
-                            <Chip
-                                label="B (Синий)"
-                                onClick={() => setChannels(prev => ({ ...prev, blue: !prev.blue }))}
-                                color={channels.blue ? "primary" : "default"}
-                                variant={channels.blue ? "filled" : "outlined"}
-                            />
                             <Chip
                                 label="A (Альфа)"
                                 onClick={() => setChannels(prev => ({ ...prev, alpha: !prev.alpha }))}
@@ -1023,9 +1016,7 @@ const ImageEditor: React.FC = () => {
 
             <LevelsDialog
                 open={levelsDialogOpen}
-                onClose={(apply) => {
-                    setLevelsDialogOpen(false);
-                }}
+                onClose={() => setLevelsDialogOpen(false)}
                 originalImageData={baseImageData}
                 currentImageData={baseImageData}
                 onApplyLevels={handleApplyLevels}
@@ -1036,17 +1027,17 @@ const ImageEditor: React.FC = () => {
                 onClose={() => setScaleModalOpen(false)}
                 originalImageData={baseImageData}
                 onApplyScale={handleApplyScale}
-                currentScalePercent={100}
+                currentScalePercent={displayScalePercent}
             />
+
             <ConvolutionModal
                 open={convolutionModalOpen}
                 onClose={() => setConvolutionModalOpen(false)}
                 originalImageData={baseImageData}
                 onApply={handleApplyConvolution}
             />
-
         </Box>
     );
 };
 
-export default ImageEditor;
+export default ImageEditor; 
