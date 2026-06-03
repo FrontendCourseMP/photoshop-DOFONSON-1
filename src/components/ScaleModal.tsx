@@ -12,8 +12,6 @@ import {
     InputLabel,
     Select,
     MenuItem,
-    FormControlLabel,
-    Checkbox,
     Grid,
     Paper,
     Alert,
@@ -25,7 +23,6 @@ import {
 import {
     Close as CloseIcon,
     Info as InfoIcon,
-    AspectRatio as AspectRatioIcon,
     Transform as TransformIcon,
 } from '@mui/icons-material';
 import { InterpolationMethod, interpolationDescriptions, scaleImage } from '../utils/interpolation';
@@ -62,34 +59,33 @@ const ScaleModal: React.FC<ScaleModalProps> = ({
     const [unitType, setUnitType] = useState<UnitType>('percent');
     const [width, setWidth] = useState<number>(100);
     const [height, setHeight] = useState<number>(100);
-    const [percent, setPercent] = useState<number>(100);
-    const [keepAspectRatio, setKeepAspectRatio] = useState<boolean>(true);
+    const [widthPercent, setWidthPercent] = useState<number>(100);
+    const [heightPercent, setHeightPercent] = useState<number>(100);
     const [method, setMethod] = useState<InterpolationMethod>('bilinear');
-    const [errors, setErrors] = useState<{ width?: string; height?: string; percent?: string }>({});
+    const [errors, setErrors] = useState<{ width?: string; height?: string; widthPercent?: string; heightPercent?: string }>({});
     
     const [originalMegapixels, setOriginalMegapixels] = useState<string>('0');
     const [targetMegapixels, setTargetMegapixels] = useState<string>('0');
     
     const originalWidth = originalImageData?.width || 0;
     const originalHeight = originalImageData?.height || 0;
-    const aspectRatio = originalWidth / originalHeight;
     
     useEffect(() => {
         if (open && originalImageData) {
             setOriginalMegapixels(formatMegapixels(originalWidth, originalHeight));
             
-            const currentPercent = currentScalePercent;
-            setPercent(currentPercent);
+            setWidthPercent(currentScalePercent);
+            setHeightPercent(currentScalePercent);
             
-            const currentWidth = Math.round(originalWidth * (currentPercent / 100));
-            const currentHeight = Math.round(originalHeight * (currentPercent / 100));
+            const currentWidth = Math.round(originalWidth * (currentScalePercent / 100));
+            const currentHeight = Math.round(originalHeight * (currentScalePercent / 100));
             setWidth(currentWidth);
             setHeight(currentHeight);
         }
     }, [open, originalImageData, originalWidth, originalHeight, currentScalePercent]);
     
     const validateValues = useCallback(() => {
-        const newErrors: { width?: string; height?: string; percent?: string } = {};
+        const newErrors: { width?: string; height?: string; widthPercent?: string; heightPercent?: string } = {};
         
         if (unitType === 'pixels') {
             if (width < MIN_WIDTH) {
@@ -104,74 +100,61 @@ const ScaleModal: React.FC<ScaleModalProps> = ({
                 newErrors.height = `Максимальная высота: ${MAX_HEIGHT}px`;
             }
         } else {
-            if (percent < MIN_PERCENT) {
-                newErrors.percent = `Минимальный процент: ${MIN_PERCENT}%`;
-            } else if (percent > MAX_PERCENT) {
-                newErrors.percent = `Максимальный процент: ${MAX_PERCENT}%`;
+            if (widthPercent < MIN_PERCENT) {
+                newErrors.widthPercent = `Минимальный процент: ${MIN_PERCENT}%`;
+            } else if (widthPercent > MAX_PERCENT) {
+                newErrors.widthPercent = `Максимальный процент: ${MAX_PERCENT}%`;
+            }
+            
+            if (heightPercent < MIN_PERCENT) {
+                newErrors.heightPercent = `Минимальный процент: ${MIN_PERCENT}%`;
+            } else if (heightPercent > MAX_PERCENT) {
+                newErrors.heightPercent = `Максимальный процент: ${MAX_PERCENT}%`;
             }
         }
         
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
-    }, [unitType, width, height, percent]);
+    }, [unitType, width, height, widthPercent, heightPercent]);
     
     const updateTargetMegapixels = useCallback(() => {
-        let w = originalWidth;
-        let h = originalHeight;
-        
-        if (unitType === 'pixels') {
-            w = width;
-            h = height;
-        } else {
-            w = Math.round(originalWidth * (percent / 100));
-            h = Math.round(originalHeight * (percent / 100));
-        }
-        
-        setTargetMegapixels(formatMegapixels(w, h));
-    }, [unitType, width, height, percent, originalWidth, originalHeight]);
+        setTargetMegapixels(formatMegapixels(width, height));
+    }, [width, height]);
     
     useEffect(() => {
         updateTargetMegapixels();
-    }, [unitType, width, height, percent, updateTargetMegapixels]);
+    }, [width, height, updateTargetMegapixels]);
     
+    const handleWidthPercentChange = (value: number) => {
+        const clampedValue = Math.min(MAX_PERCENT, Math.max(MIN_PERCENT, value));
+        setWidthPercent(clampedValue);
+        const newWidth = Math.round(originalWidth * (clampedValue / 100));
+        setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, newWidth)));
+    };
+    
+    const handleHeightPercentChange = (value: number) => {
+        const clampedValue = Math.min(MAX_PERCENT, Math.max(MIN_PERCENT, value));
+        setHeightPercent(clampedValue);
+        const newHeight = Math.round(originalHeight * (clampedValue / 100));
+        setHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, newHeight)));
+    };
+
     const handleWidthChange = (value: number) => {
         const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value));
         setWidth(newWidth);
-        if (keepAspectRatio && originalWidth > 0) {
-            const newHeight = Math.round(newWidth / aspectRatio);
-            setHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, newHeight)));
-        }
-        if (unitType === 'pixels' && originalWidth > 0) {
+        if (originalWidth > 0) {
             const newPercent = Math.round((newWidth / originalWidth) * 100);
-            if (newPercent >= MIN_PERCENT && newPercent <= MAX_PERCENT) {
-                setPercent(newPercent);
-            }
+            setWidthPercent(Math.min(MAX_PERCENT, Math.max(MIN_PERCENT, newPercent)));
         }
     };
     
     const handleHeightChange = (value: number) => {
         const newHeight = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, value));
         setHeight(newHeight);
-        if (keepAspectRatio && originalHeight > 0) {
-            const newWidth = Math.round(newHeight * aspectRatio);
-            setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, newWidth)));
-        }
-        if (unitType === 'pixels' && originalHeight > 0) {
+        if (originalHeight > 0) {
             const newPercent = Math.round((newHeight / originalHeight) * 100);
-            if (newPercent >= MIN_PERCENT && newPercent <= MAX_PERCENT) {
-                setPercent(newPercent);
-            }
+            setHeightPercent(Math.min(MAX_PERCENT, Math.max(MIN_PERCENT, newPercent)));
         }
-    };
-    
-    const handlePercentChange = (value: number) => {
-        const clampedValue = Math.min(MAX_PERCENT, Math.max(MIN_PERCENT, value));
-        setPercent(clampedValue);
-        
-        const newWidth = Math.round(originalWidth * (clampedValue / 100));
-        const newHeight = Math.round(originalHeight * (clampedValue / 100));
-        setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, newWidth)));
-        setHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, newHeight)));
     };
     
     const handleUnitChange = (newUnit: UnitType) => {
@@ -181,19 +164,10 @@ const ScaleModal: React.FC<ScaleModalProps> = ({
     const handleApply = () => {
         if (!validateValues() || !originalImageData) return;
         
-        let targetWidth: number, targetHeight: number;
-        let newScalePercent: number;
+        const targetWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
+        const targetHeight = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, height));
         
-        if (unitType === 'pixels') {
-            targetWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
-            targetHeight = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, height));
-            newScalePercent = Math.round((targetWidth / originalWidth) * 100);
-            newScalePercent = Math.min(MAX_PERCENT, Math.max(MIN_PERCENT, newScalePercent));
-        } else {
-            newScalePercent = Math.min(MAX_PERCENT, Math.max(MIN_PERCENT, percent));
-            targetWidth = Math.round(originalWidth * (newScalePercent / 100));
-            targetHeight = Math.round(originalHeight * (newScalePercent / 100));
-        }
+        const newScalePercent = Math.round((targetWidth / originalWidth) * 100);
         
         try {
             const scaledImageData = scaleImage(
@@ -259,9 +233,7 @@ const ScaleModal: React.FC<ScaleModalProps> = ({
                                     <strong>Новое изображение:</strong>
                                 </Typography>
                                 <Typography variant="caption" color="text.secondary">
-                                    {unitType === 'pixels' 
-                                        ? `${width} × ${height} px`
-                                        : `${Math.round(originalWidth * (percent / 100))} × ${Math.round(originalHeight * (percent / 100))} px`}
+                                    {width} × {height} px
                                     <br />
                                     {targetMegapixels} Мп
                                 </Typography>
@@ -282,18 +254,36 @@ const ScaleModal: React.FC<ScaleModalProps> = ({
                     </FormControl>
                     
                     {unitType === 'percent' ? (
-                        <TextField
-                            label="Процент масштаба"
-                            type="number"
-                            value={percent}
-                            onChange={(e) => handlePercentChange(Number(e.target.value))}
-                            error={!!errors.percent}
-                            helperText={errors.percent || `Диапазон: ${MIN_PERCENT}% - ${MAX_PERCENT}%`}
-                            fullWidth
-                            InputProps={{
-                                endAdornment: <Typography variant="body2" color="text.secondary">%</Typography>
-                            }}
-                        />
+                        <Grid container spacing={2}>
+                            <Grid item xs={6}>
+                                <TextField
+                                    label="Ширина (%)"
+                                    type="number"
+                                    value={widthPercent}
+                                    onChange={(e) => handleWidthPercentChange(Number(e.target.value))}
+                                    error={!!errors.widthPercent}
+                                    helperText={errors.widthPercent || `${MIN_PERCENT}% - ${MAX_PERCENT}%`}
+                                    fullWidth
+                                    InputProps={{
+                                        endAdornment: <Typography variant="body2" color="text.secondary">%</Typography>
+                                    }}
+                                />
+                            </Grid>
+                            <Grid item xs={6}>
+                                <TextField
+                                    label="Высота (%)"
+                                    type="number"
+                                    value={heightPercent}
+                                    onChange={(e) => handleHeightPercentChange(Number(e.target.value))}
+                                    error={!!errors.heightPercent}
+                                    helperText={errors.heightPercent || `${MIN_PERCENT}% - ${MAX_PERCENT}%`}
+                                    fullWidth
+                                    InputProps={{
+                                        endAdornment: <Typography variant="body2" color="text.secondary">%</Typography>
+                                    }}
+                                />
+                            </Grid>
+                        </Grid>
                     ) : (
                         <Grid container spacing={2}>
                             <Grid item xs={6}>
@@ -326,18 +316,6 @@ const ScaleModal: React.FC<ScaleModalProps> = ({
                             </Grid>
                         </Grid>
                     )}
-                    
-                    <FormControlLabel
-                        control={
-                            <Checkbox
-                                checked={keepAspectRatio}
-                                onChange={(e) => setKeepAspectRatio(e.target.checked)}
-                                icon={<AspectRatioIcon />}
-                                checkedIcon={<AspectRatioIcon color="primary" />}
-                            />
-                        }
-                        label="Сохранять пропорции"
-                    />
                     
                     <FormControl fullWidth>
                         <InputLabel>Алгоритм интерполяции</InputLabel>

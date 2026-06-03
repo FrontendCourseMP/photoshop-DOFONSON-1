@@ -359,48 +359,45 @@ const ImageEditor: React.FC = () => {
     const handleApplyConvolution = useCallback((newImageData: ImageData) => {
         setBaseImageData(newImageData);
         generateChannelThumbnails(newImageData);
-        setIsGrayBit(false);
         if (imageInfo) {
-            const newColorDepth = getColorDepthFromImageData(newImageData);
+            const preservedColorDepth = isGrayBit ? imageInfo.colorDepth : getColorDepthFromImageData(newImageData);
             setImageInfo({
                 ...imageInfo,
                 width: newImageData.width,
                 height: newImageData.height,
-                colorDepth: newColorDepth,
+                colorDepth: preservedColorDepth,
             });
         }
-    }, [imageInfo, generateChannelThumbnails]);
+    }, [imageInfo, generateChannelThumbnails, isGrayBit]);
 
     const handleApplyLevels = useCallback((newImageData: ImageData) => {
         setBaseImageData(newImageData);
         generateChannelThumbnails(newImageData);
-        setIsGrayBit(false);
         if (imageInfo) {
-            const newColorDepth = getColorDepthFromImageData(newImageData);
+            const preservedColorDepth = isGrayBit ? imageInfo.colorDepth : getColorDepthFromImageData(newImageData);
             setImageInfo(prev => prev ? {
                 ...prev,
                 width: newImageData.width,
                 height: newImageData.height,
-                colorDepth: newColorDepth,
+                colorDepth: preservedColorDepth,
             } : null);
         }
-    }, [imageInfo, generateChannelThumbnails]);
+    }, [imageInfo, generateChannelThumbnails, isGrayBit]);
 
     const handleApplyScale = useCallback((scaledImageData: ImageData, newScalePercent: number) => {
         setBaseImageData(scaledImageData);
         generateChannelThumbnails(scaledImageData);
-        setIsGrayBit(false);
         if (imageInfo) {
-            const newColorDepth = getColorDepthFromImageData(scaledImageData);
+            const preservedColorDepth = isGrayBit ? imageInfo.colorDepth : getColorDepthFromImageData(scaledImageData);
             setImageInfo({
                 ...imageInfo,
                 width: scaledImageData.width,
                 height: scaledImageData.height,
-                colorDepth: newColorDepth,
+                colorDepth: preservedColorDepth,
             });
         }
         setDisplayScalePercent(100);
-    }, [imageInfo, generateChannelThumbnails]);
+    }, [imageInfo, generateChannelThumbnails, isGrayBit]);
 
     const handleCanvasClick = useCallback((_event: React.MouseEvent<HTMLCanvasElement>, x: number, y: number, color: { r: number; g: number; b: number; a: number }) => {
         if (!eyedropperActive || !displayImageData) return;
@@ -1020,6 +1017,7 @@ const ImageEditor: React.FC = () => {
                 originalImageData={baseImageData}
                 currentImageData={baseImageData}
                 onApplyLevels={handleApplyLevels}
+                isGrayBit={isGrayBit}
             />
 
             <ScaleModal
@@ -1040,4 +1038,4 @@ const ImageEditor: React.FC = () => {
     );
 };
 
-export default ImageEditor; 
+export default ImageEditor;
