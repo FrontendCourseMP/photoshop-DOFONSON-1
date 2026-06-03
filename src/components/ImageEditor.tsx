@@ -240,24 +240,10 @@ const ImageEditor: React.FC = () => {
         setFilteredImageData(filtered);
     }, [baseImageData, channels, displayMode, applyChannelsToImageData]);
 
-    const fitImageToContainer = useCallback(() => {
-        if (!baseImageData || !canvasContainerRef.current) return;
-        const container = canvasContainerRef.current;
-        const containerWidth = container.clientWidth - 32;
-        const containerHeight = container.clientHeight - 32;
-        if (containerWidth <= 0 || containerHeight <= 0) return;
-        const scaleX = (containerWidth / baseImageData.width) * 100;
-        const scaleY = (containerHeight / baseImageData.height) * 100;
-        const fitScale = Math.min(scaleX, scaleY, 100);
-        setDisplayScalePercent(fitScale);
-    }, [baseImageData]);
+
 
     const handleScaleChange = useCallback((newScale: number) => {
         setDisplayScalePercent(newScale);
-    }, []);
-
-    const handleScaledImageChange = useCallback((scaledImageData: ImageData, _scalePercent: number) => {
-        setDisplayImageData(scaledImageData);
     }, []);
 
     const generateChannelThumbnails = useCallback((imageData: ImageData) => {
@@ -343,19 +329,6 @@ const ImageEditor: React.FC = () => {
         return hasAlpha ? 32 : 24;
     };
 
-    const setNewImageData = useCallback((imageData: ImageData, fileInfo: Omit<ImageInfoData, 'width' | 'height' | 'colorDepth'> & { colorDepth?: number }) => {
-        setBaseImageData(imageData);
-        setOriginalLoadedImageData(imageData);
-        generateChannelThumbnails(imageData);
-        const colorDepth = fileInfo.colorDepth ?? getColorDepthFromImageData(imageData);
-        setImageInfo({
-            ...fileInfo,
-            width: imageData.width,
-            height: imageData.height,
-            colorDepth: colorDepth,
-        });
-    }, [generateChannelThumbnails]);
-
     const handleApplyConvolution = useCallback((newImageData: ImageData) => {
         setBaseImageData(newImageData);
         generateChannelThumbnails(newImageData);
@@ -383,6 +356,46 @@ const ImageEditor: React.FC = () => {
             } : null);
         }
     }, [imageInfo, generateChannelThumbnails, isGrayBit]);
+
+    const handleScaledImageChange = useCallback((scaledImageData: ImageData, _scalePercent: number) => {
+        setDisplayImageData(scaledImageData);
+    }, []);
+
+    const fitToContainer = useCallback((width: number, height: number) => {
+        if (!canvasContainerRef.current) return;
+        const container = canvasContainerRef.current;
+        const containerWidth = container.clientWidth - 32;
+        const containerHeight = container.clientHeight - 32;
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+        const scaleX = (containerWidth / width) * 100;
+        const scaleY = (containerHeight / height) * 100;
+        const fitScale = Math.min(scaleX, scaleY, 300);
+        setDisplayScalePercent(Math.round(fitScale));
+    }, []);
+    
+    const fitImageToContainer = useCallback(() => {
+        if (!baseImageData) return;
+        fitToContainer(baseImageData.width, baseImageData.height);
+    }, [baseImageData, fitToContainer]);
+
+    const setNewImageData = useCallback((imageData: ImageData, fileInfo: Omit<ImageInfoData, 'width' | 'height' | 'colorDepth'> & { colorDepth?: number }) => {
+        setBaseImageData(imageData);
+        setOriginalLoadedImageData(imageData);
+        generateChannelThumbnails(imageData);
+        const colorDepth = fileInfo.colorDepth ?? getColorDepthFromImageData(imageData);
+        setImageInfo({
+            ...fileInfo,
+            width: imageData.width,
+            height: imageData.height,
+            colorDepth: colorDepth,
+        });
+        
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                fitToContainer(imageData.width, imageData.height);
+            });
+        });
+    }, [generateChannelThumbnails, fitToContainer]);
 
     const handleApplyScale = useCallback((scaledImageData: ImageData, newScalePercent: number) => {
         setBaseImageData(scaledImageData);
